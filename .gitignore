@@ -1,0 +1,20 @@
+node_modules
+# Local run artifacts: test logs, pack receipts, update locks, browser captures.
+/.*.log
+/.*.lock
+.dsh-ops-update-*.lock
+/.pack-*.json
+/.question-pack.json
+/.live-native-graph.json
+/.playwright-cli/
+/output/
+__pycache__/
+*.py[cod]
+*.tgz
+.env
+.env.*
+/.test-r42-linux-addon/
+.DS_Store
+/ACCEPTANCE.md
+/GOAL.md
+/GOAL-STATUS.md

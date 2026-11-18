@@ -1,0 +1,10 @@
+- id: tools
+  inject:
+    - lanToolOrigins
+- insert:
+    - id: multi-user-tool-origins
+      name: '@ysz-leo/dsh-multi-user-service/tool-origins'
+    - id: multi-user-service
+      name: '@ysz-leo/dsh-multi-user-service'
+    - id: member-cli-tools
+      name: '@ysz-leo/dsh-multi-user-service/cli-tools'
