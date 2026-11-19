@@ -19,8 +19,12 @@
 > | `native/landlock-run` | 随包携带的静态编译启动器（去掉 partial 写 stderr 的行为，避免被 `fatalSignatures` 误判） |
 > | `tests/member-boundary.test.js` | 按 partial 语义更新，支持注入 launcher 路径 |
 > | `package.json` | 包名/仓库地址改为本仓库；`files` 增加 `native/*` |
+> | `carrier/member.mjs` | 上传成功后把附件**镜像复制**到成员会话工作区的 `.uploads/` 目录（0644），使受沙箱约束的 read 工具可直接读取 |
+> | `carrier/attachments.mjs` | `record()` 新增 `mirror` 参数持久化「附件路径 → 镜像路径」映射；新增 `mirrorOf(hostPath)` 跨用户按全局唯一路径反查镜像 |
+> | `carrier/file-mapping.mjs` | 新增：包装 fs 服务的 `processPathFromHostPath`，把附件存储路径翻译为工作区镜像路径，未命中（owner 上传/旧附件）原样回退 |
+> | `member-host.mjs` | 通过 `ctx.inject(['fs'], …)` 安装上述路径翻译 hook，带清理还原 |
 >
-> 这些改动是**向后兼容的增强**：在发布包形态（`npx @deepseek-ai/dsh`）下走第一候选直接命中、行为与上游一致；在源码树 + tsx 形态下补齐了上游缺失的兼容性。详见 [`PATCH-NOTES.md`](PATCH-NOTES.md)。
+> 这些改动是**向后兼容的增强**：在发布包形态（`npx @deepseek-ai/dsh`）下走第一候选直接命中、行为与上游一致；在源码树 + tsx 形态下补齐了上游缺失的兼容性。详见下文「[与上游仓库的功能对比](#与上游仓库的功能对比)」及 [`PATCH-NOTES.md`](PATCH-NOTES.md)。
 
 ---
 
@@ -53,8 +57,24 @@
   - 发布包形态（`npx @deepseek-ai/dsh web` / `npm i -g @deepseek-ai/dsh`）—— 开箱即用，与上游行为一致。
   - 源码树形态（`git clone` + `pnpm install` + `pnpm dsh web`，即 tsx 实时运行 `src/*.ts`）—— 本版修复了上游在该形态下「模块被加载成多份实例」导致的问题。
 - **不会出现工具无法调用等报错**：修复了成员会话 `request/header` 无 `tools`（模型把工具调用写成正文）、`all tools cannot be deferred`（400）等问题；成员 `write` / `bash` / `glob` 等工具可正常调用执行。
+- **成员上传的附件可被 AI 正常读取**：上传文件后，插件会把附件**镜像复制**到该成员会话工作区的 `.uploads/` 目录，并 hook 文件系统的 `processPathFromHostPath`，让 AI 在提示文本里拿到的就是工作区内可读的镜像路径（而非沙箱之外的附件存储路径），read 工具直接可读。映射关系随附件授权一并持久化，容器重启后自动恢复；owner 上传及旧附件无镜像记录，路径翻译原样回退，不受影响。
 
 可用于公司内网或已配置的公网入口；成员使用管理员创建或邀请的账号登录。
+
+## 与上游仓库的功能对比
+
+本修复版基于上游 [sunbigfly/dsh-multi-user-service](https://github.com/sunbigfly/dsh-multi-user-service) 派生，除继承其全部多用户管理能力外，针对实际部署场景补齐了若干上游缺失或不可用的能力。下表按功能维度对比两版差异：
+
+| 功能 | 上游仓库 | 本修复版 |
+| --- | --- | --- |
+| **源码树 + tsx 方式运行** | 模块被加载成多份实例，工具来源表为空、`dsh-scope` 拿不到真正共享状态，导致成员会话无工具、工具调用报错 | ✅ 多候选解析 + 运行时 `scopeOf` 实测选定共享实例，源码树与发布包两种形态均可正常调用工具 |
+| **成员代码执行边界** | 依赖完整 Landlock（`full`），内核/环境不满足时报 "working native directory boundary"，成员执行被拒 | ✅ 接受 `partial` 判定，内置 `landlock-run` 静态启动器与 CLI 契约 shim，WSL2 等 partial 环境成员 bash / 代码执行可用 |
+| **成员侧边栏** | `dsh-better-sidebar` 在 `/lan/` 下触发 CSRF/403 | ✅ 成员入口过滤该插件及其依赖，恢复原生 `sidebar-files` 侧边栏 |
+| **成员上传文件的读取** | AI 拿到的是附件存储路径（会话工作区之外），read 工具被沙箱拒绝 | ✅ 上传后镜像复制到成员工作区 `.uploads/`，并 hook 路径翻译，AI 直接拿到可读镜像路径（详见上文「兼容性」） |
+| **诊断日志** | 默认写 `/home/dsh/lan-tools-debug.log` | ✅ 改为环境变量 `DSH_LAN_DEBUG_LOG` 控制，默认关闭 |
+| **发布形态** | `npx @deepseek-ai/dsh` 正常，源码树形态存在兼容问题 | ✅ 两种形态均开箱即用，向后兼容 |
+
+> 以上均为**向后兼容的增强**：在发布包形态下行为与上游一致；源码树 + tsx 形态下补齐了上游缺失的兼容性。完整修复清单与验证记录见 [`PATCH-NOTES.md`](PATCH-NOTES.md)。
 
 ## 开始使用
 

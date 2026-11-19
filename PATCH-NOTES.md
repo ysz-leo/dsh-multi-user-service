@@ -23,7 +23,18 @@
      （`--probe`、`--ro`/`--rw`、失败退出码 125），只依赖随包携带的 launcher。
    - 包内 launcher 若因拷贝丢失执行位，probe 前会尝试补 `0755`。
 
-3. **其他**
+3. **成员上传的附件读不到（"位于会话工作区之外"）**
+   （`carrier/member.mjs`、`carrier/attachments.mjs`、`carrier/file-mapping.mjs`、`member-host.mjs`）
+   - 根因：DSH 上传后 AI 拿到的路径是附件存储路径（`/home/dsh/.dsh/attachments/…`），
+     在成员会话工作区之外，被沙箱 `memberPathDenial` 拒绝；而 fs 的 `processPathFromHostPath`
+     是「原样返回」的空翻译，未把该路径映射到成员可读的工作区。
+   - 方案：上传成功后把附件镜像复制到成员会话工作区的 `.uploads/` 目录（0644），
+     并把「附件路径 → 镜像路径」映射随 `attachment_access` 授权一并持久化（重启自动恢复）。
+   - hook fs 服务的 `processPathFromHostPath`：命中映射即返回 `.uploads/` 镜像路径，
+     AI 提示文本里的 `saved at "…"` 即变为可读路径；未命中（owner 上传/旧附件）原样回退。
+   - 按附件存储路径（sha256 内容寻址、全局唯一）查表，无需 userId 上下文。
+
+4. **其他**
    - 诊断日志改为环境变量 `DSH_LAN_DEBUG_LOG` 控制（不设置即完全关闭，不再写
      `/home/dsh/lan-tools-debug.log`）。
    - `package.json` 的 `files` 增加 `native/*`，安装/打包时携带 launcher。

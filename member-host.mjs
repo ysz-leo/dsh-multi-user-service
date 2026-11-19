@@ -23,6 +23,7 @@ import { mountMemberCarrier } from './carrier/member.mjs';
 import { installMemberTerminals } from './carrier/execution.mjs';
 import { createMemberBoundary, installMemberBoundary, memberHome, memberSourceIsolated } from './carrier/member-boundary.mjs';
 import { MemberAttachmentAccess } from './carrier/attachments.mjs';
+import { installMemberFileMapping } from './carrier/file-mapping.mjs';
 import { readMemberAttachments } from './carrier/workspaces.mjs';
 import { MemberOwnership, memberAccessPolicy, memberToolAllow, memberPathDenial } from './carrier/access.mjs';
 import { MemberCapabilities, installMemberScheduleAdmission } from './carrier/capabilities.mjs';
@@ -243,6 +244,20 @@ export async function mountMemberHost(ctx, { core, coreStore, hostCapability, up
       return legacy;
     });
     cleanup.push(() => attachmentAccess.close());
+    // Rewrite host→process path mapping for the filesystem provider so a member
+    // attachment resolves to its workspace mirror (readable by the sandboxed
+    // read tool) instead of the fenced attachment store. Owner paths without a
+    // recorded mirror pass through unchanged.
+    const fileMappings = new Map();
+    cleanup.push(() => { for (const restore of fileMappings.values()) restore(); fileMappings.clear(); });
+    const ensureFileMapping = context => {
+      const service = context.get('fs');
+      if (!service) return;
+      const original = service[Symbol.for('cordis.original')] ?? service;
+      if (!fileMappings.has(original)) fileMappings.set(original, installMemberFileMapping(service, { attachmentAccess }));
+    };
+    const fileMappingObserver = ctx.inject(['fs'], ensureFileMapping);
+    cleanup.push(() => fileMappingObserver.dispose());
     const isolation = createIsolationCheck({ core, runtime });
     const updateHomeDirectory = createHomeDirectoryController({ core, homes });
     let auth;

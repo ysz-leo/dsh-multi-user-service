@@ -41,7 +41,7 @@ ENV WEB_PORT=3080 \
     DSH_PORT=13080 \
     DSH_BIND=127.0.0.1 \
     LAN_HOST=dsh-lan \
-    LAN_PORT="${LAN_PORT:-$WEB_PORT}"   # 不填则跟随 WEB_PORT
+    LAN_PORT="${LAN_PORT:-$WEB_PORT}"
 
 RUN useradd -m -s /bin/bash dsh
 

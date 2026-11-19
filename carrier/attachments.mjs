@@ -27,16 +27,29 @@ export class MemberAttachmentAccess {
     }
     return this;
   }
-  async record(userId, id, path) {
-    if (this.#closed || !USER.test(userId) || !ID.test(id) || memberPath(path) !== path) throw new Error('Invalid member attachment receipt');
+  async record(userId, id, path, mirror = null) {
+    if (this.#closed || !USER.test(userId) || !ID.test(id) || memberPath(path) !== path || (mirror !== null && memberPath(mirror) !== mirror)) throw new Error('Invalid member attachment receipt');
     const operation = this.#queue.then(async () => {
       const next = structuredClone(this.#state), grants = next.grants[userId] ??= [];
-      if (!grants.some(grant => grant.id === id && grant.path === path)) grants.push({ id, path });
+      const existing = grants.find(grant => grant.id === id && grant.path === path);
+      if (existing) { if (mirror !== null && existing.mirror !== mirror) existing.mirror = mirror; }
+      else grants.push({ id, path, ...(mirror === null ? {} : { mirror }) });
       await this.#store.save(next);
       this.#state = next;
     });
     this.#queue = operation.catch(() => {});
     await operation;
+  }
+  /** Resolve the workspace mirror for one host attachment path, across every
+   * member's grants. The host path is content-addressed and therefore globally
+   * unique, so it alone identifies the grant — no principal is required. */
+  mirrorOf(hostPath) {
+    if (this.#closed || memberPath(hostPath) !== hostPath) return undefined;
+    for (const grants of Object.values(this.#state?.grants ?? {})) {
+      const grant = grants.find(grant => grant.path === hostPath);
+      if (grant?.mirror) return grant.mirror;
+    }
+    return undefined;
   }
   allows(userId, candidate, fileHostPath) {
     if (this.#closed || !USER.test(userId) || memberPath(candidate) !== candidate) return false;

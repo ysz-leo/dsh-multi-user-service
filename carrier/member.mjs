@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { open, realpath, readFile } from 'node:fs/promises';
+import { open, realpath, readFile, copyFile, mkdir, chmod } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, relative, isAbsolute, extname, posix } from 'node:path';
 import { once } from 'node:events';
@@ -631,7 +631,24 @@ async function dispatchApi(request, url, endpoint, current, peer) {
         const store = ctx.get?.('attachments');
         const path = value.file ? store?.fileHostPath(ref) : store?.imageHostPath(ref);
         if (!attachmentAccess || typeof path !== 'string') bad('MEMBER_UPLOAD_DENIED', 'Member attachment access cannot be recorded', 503);
-        await attachmentAccess.record(current.user.id, ref.attachmentId, memberPath(path));
+        // Mirror the upload into the member's own session workspace so the
+        // member's read tool — sandboxed to the current conversation workspace —
+        // can open the file directly instead of the fenced attachment store.
+        let mirror = null;
+        try {
+          const sessionId = target.searchParams.get('sessionId');
+          const entry = typeof ownership?.entriesOf === 'function' ? ownership.entriesOf(current.user.id).find(row => row.sessionId === sessionId) : undefined;
+          const cwd = memberPath(entry?.cwd);
+          if (typeof cwd === 'string') {
+            const name = posix.basename(path);
+            const uploadsDir = posix.join(cwd, '.uploads');
+            await mkdir(uploadsDir, { recursive: true });
+            mirror = posix.join(uploadsDir, name);
+            await copyFile(path, mirror);
+            await chmod(mirror, 0o644);
+          }
+        } catch { /* Mirroring is best-effort: the upload itself already succeeded. */ }
+        await attachmentAccess.record(current.user.id, ref.attachmentId, memberPath(path), mirror);
       }
     }
     if (endpoint === 'schedule/catalog' && response.ok) {
