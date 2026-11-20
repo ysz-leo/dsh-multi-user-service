@@ -1,26 +1,79 @@
 # Docker 部署说明
 
-本目录提供 DSH 多用户服务（`@ysz-leo/dsh-multi-user-service`）的 Docker 部署方式。
+本目录提供 DSH 多用户服务（`@ysz-leo/dsh-multi-user-service`）的 Docker 部署方式，**提供两种构建/运行方法，按宿主机平台二选一**：
+
+- **bridge 版**（`Dockerfile` + `start-dsh-web.sh`）：通用方案，靠 `-p` 端口映射 + nginx `18781` 反代访问 bili。**适用 Linux / Windows / macOS（含 Docker Desktop）**。
+- **host 版**（`Dockerfile.hostnet` + `start-dsh-web-hostnet.sh`）：容器共享宿主机网络栈，bili 直连无需反代。**适用 Linux 服务器与 Windows**（Windows 需在 Docker Desktop 手动开启 host networking 开关，见「选择建议」）；macOS 不支持。
+
+两者的插件、账号体系、成员入口等完全一致，**唯一差异是网络模式**（详见下文「两种构建方法对比」）。
 
 ## 文件说明
 
 | 文件 | 用途 |
 | --- | --- |
-| `Dockerfile` | 两阶段构建：① 从上游 `dsh-v0.2.1-rc.2` 构建 DSH（源码树 + tsx）；② 组装运行环境（nginx 反代 + sshd + 本插件）。nginx 含两个 server：主入口 `3080` 与 bili 专用反代口 `18781` |
-| `dsh_requirements.txt` | 容器内 Python 依赖（数据/文档处理类工具所需） |
-| `start-dsh-web.sh` | 一键启动脚本：删旧容器 → `docker run` → 等待 dsh 就绪 → 打印访问地址与 token（含 bili 入口） |
+| `Dockerfile` | **bridge 版**镜像：两阶段构建：① 从上游 `dsh-v0.2.1-rc.2` 构建 DSH（源码树 + tsx）；② 组装运行环境（nginx 反代 + sshd + 本插件）。nginx 含两个 server：主入口 `3080` 与 bili 专用反代口 `18781` |
+| `start-dsh-web.sh` | **bridge 版**一键启动脚本：`-p` 端口映射 → 删旧容器 → `docker run` → 等待 dsh 就绪 → 打印访问地址与 token（含 bili 入口） |
+| `Dockerfile.hostnet` | **host 版**镜像：与 `Dockerfile` 构建方式/插件完全相同，仅改网络相关部分——去掉 bili 反代口、sshd `22`→`2222`、新增 `SSH_PORT`、`EXPOSE 3080 18787 2222`。**Linux / Windows（需开启开关）** |
+| `start-dsh-web-hostnet.sh` | **host 版**一键启动脚本：`--network host`（无 `-p`）→ 启动前预检宿主端口冲突 → 等待就绪 → 打印访问地址与 token |
+| `dsh_requirements.txt` | 容器内 Python 依赖（数据/文档处理类工具所需），两种构建方法共用 |
 
-## 1. 构建镜像
+## 1. 选择构建方法
 
-在**本插件仓库根目录**执行（构建上下文是插件仓库根目录，Dockerfile 用 `Docker/Dockerfile` 指定）：
+按**宿主机平台**二选一（其余功能完全一致，只差网络模式）：
+
+| 对比项 | bridge 版（默认） | host 版 |
+| --- | --- | --- |
+| 构建文件 | `Dockerfile` | `Dockerfile.hostnet` |
+| 启动脚本 | `start-dsh-web.sh` | `start-dsh-web-hostnet.sh` |
+| 镜像 tag | `dsh-multi-user:0.2.1-rc.2` | `dsh-multi-user:0.2.1-rc.2-hostnet` |
+| 网络模式 | bridge + `-p` 端口映射 | `--network host`（无 `-p`） |
+| 外部访问端口 | `-p 3080:3080` 等映射 | 容器直接占用宿主 `3080` |
+| bili 链路 | 宿主 `18787` → nginx `18781` → bili 回环 `18787` | 宿主 `127.0.0.1:18787` == bili 本体（直连，无反代） |
+| SSH 端口 | 宿主 `220` → 容器 `22` | 容器 `sshd 2222`（避开宿主默认 22） |
+| 适用平台 | **Linux / Windows / macOS**（含 Docker Desktop） | **Linux / Windows**（Windows 需开启开关，见下）；macOS 不支持 |
+| 端口冲突 | 由 `-p` 映射处理 | 启动前预检，占用则报错退出 |
+
+> **选择建议**：macOS 或不确定平台 → 用 **bridge 版**（最稳妥）。Linux 服务器、或 Windows 希望省去反代与端口映射 → 可用 **host 版**。
+>
+> **⚠️ Windows 使用 host 版必须先开启实验开关**：在 Docker Desktop 的 **Settings → Resources → Network** 中，勾选 **"Enable host networking"**，保存后 Docker Desktop 会重启。未开启时 `--network host` 不会真正共享宿主机网络（bili 回环 `18787` 不可达），请改用 bridge 版。实测 Windows 开启该开关后 host 版可正常访问 `3080`、`18787` 等端口。详细开启步骤见下文「Windows：开启 Enable host networking」。
+
+> **平台差异提示**：host 模式下，容器绑 `0.0.0.0` 的端口（如 `3080`）可被远程设备访问，绑 `127.0.0.1` 的端口（如 `18787` bili）仅宿主机本机可达。若端口启动后本机访问不通，先查宿主侧是否有 Docker 转发监听；容器已监听但宿主无监听时，`docker restart dsh-web` 重建转发注册即可。
+
+### Windows：开启 Enable host networking（host 版必做）
+
+Windows 上的 Docker Desktop 默认**不支持真正的 host 网络**——未开启开关时 `--network host` 只共享 Linux VM 的网络栈，容器回环 `18787` 无法从 Windows 本机访问。开启步骤如下（Linux 原生 Docker 无需此节，`--network host` 开箱即用）：
+
+1. 启动 **Docker Desktop**，确认它正在正常运行（托盘图标无异常）。
+2. 点击右上角 **齿轮图标** → **Settings（设置）**。
+3. 在左侧栏选择 **Resources → Network（资源 → 网络）**。
+4. 找到并勾选 **"Enable host networking"（启用 host 网络）** 复选框。
+5. 点击右下角 **Apply & restart（应用并重启）** 保存，Docker Desktop 会自动重启（约 1–2 分钟，期间容器短暂停止）。
+6. 重启完成后，确认 Docker Engine 版本（host 网络为实验特性，需 ≥ 28.0.0）：
+
+   ```sh
+   docker version --format '{{.Server.Version}}'
+   ```
+
+7. 之后按 host 版正常构建镜像、启动容器即可（见下文「2. 构建镜像」「3. 启动容器」）。
+
+> **找不到该选项？** 该开关属实验特性，位置/名称可能随 Docker Desktop 版本变化，请先把 Docker Desktop 升级到最新版再试。macOS 版 Docker Desktop 没有此开关，请改用 bridge 版。
+
+## 2. 构建镜像
+
+在**本插件仓库根目录**执行（构建上下文是插件仓库根目录，用 `-f` 指定对应的 Dockerfile）：
 
 ```sh
 # 获取本插件仓库并进入
 git clone https://github.com/ysz-leo/dsh-multi-user-service.git
 cd dsh-multi-user-service
 
-# 构建镜像
+# 二选一构建：
+
+# (A) bridge 版（通用，Docker Desktop 也能用）
 docker build -t dsh-multi-user:0.2.1-rc.2 -f Docker/Dockerfile .
+
+# (B) host 版（Linux / Windows，Windows 需先开启 Enable host networking）
+docker build -t dsh-multi-user:0.2.1-rc.2-hostnet -f Docker/Dockerfile.hostnet .
 ```
 
 构建要点：
@@ -64,11 +117,11 @@ git clone --depth 1 --branch dsh-v0.2.1-rc.2 https://github.com/deepseek-ai/deep
 
 > `deepseek-harness` 是 pnpm monorepo，构建时执行 `pnpm install --frozen-lockfile && pnpm run build` 编译出 `lib/` 产物，再以「源码树 + tsx」方式运行。构建环境需能访问 GitHub 与 npm registry（Dockerfile 已配置清华镜像加速 apt/pip）。
 
-## 2. 启动容器
+## 3. 启动容器
 
 ### 方式 A：用启动脚本（推荐）
 
-先编辑 `Docker/start-dsh-web.sh` 顶部「配置区」：
+**bridge 版**先编辑 `Docker/start-dsh-web.sh` 顶部「配置区」：
 
 ```sh
 IMAGE="dsh-multi-user:0.2.1-rc.2"    # 与构建镜像名一致
@@ -87,11 +140,30 @@ DEEPSEEK_API_KEY="sk-xxxx"            # 你的模型 API Key（必填）
 ./Docker/start-dsh-web.sh
 ```
 
-脚本会自动等待 dsh 启动完成，并打印出：
+**host 版**（Linux / Windows，Windows 需先开启 Enable host networking）先编辑 `Docker/start-dsh-web-hostnet.sh` 顶部「配置区」——注意这里没有宿主机映射口，`WEB_PORT` / `SSH_PORT` / `BILI_ZONE_PORT` 就是容器直接占用的宿主端口：
+
+```sh
+IMAGE="dsh-multi-user:0.2.1-rc.2-hostnet"  # 与 host 版构建 tag 一致
+WEB_PORT=3080          # 占用宿主 3080（dsh web 主入口，绑 0.0.0.0）
+SSH_PORT=2222          # 占用宿主 2222（避开默认 22）
+BILI_ZONE_PORT=18787   # 占用宿主 18787（bili 本体，绑回环；插件写死 18787，一般不要改）
+DSH_PORT=13080         # dsh 本体内部监听口
+LAN_HOST=dsh-lan       # 必须与 owner 的 127.0.0.1 不同，否则多用户插件启动校验失败
+WORKSPACE="/path/to/your/workspace"
+DEEPSEEK_API_KEY="sk-xxxx"
+```
+
+然后执行（脚本会先预检宿主端口冲突，占用则报错退出）：
+
+```sh
+./Docker/start-dsh-web-hostnet.sh
+```
+
+两个脚本都会自动等待 dsh 启动完成，并打印出：
 
 - 管理入口 URL（owner）
 - 成员访问 URL（`/lan/`）
-- bili 反代入口 URL（`/__bili/`）
+- bili 入口 URL（`/__bili/`）
 - 访问 token
 
 ### 方式 B：手动 docker run
@@ -117,15 +189,46 @@ docker run -d \
   dsh-multi-user:0.2.1-rc.2
 ```
 
-## 3. 端口与入口说明
+**host 版**（Linux / Windows，Windows 需先开启 Enable host networking）手动命令——无 `-p`、无 `--add-host`，改用 `--network host`：
+
+```sh
+docker run -d \
+  --name dsh-web \
+  --restart unless-stopped \
+  --network host \
+  -e WEB_PORT=3080 \
+  -e DSH_PORT=13080 \
+  -e DSH_BIND=127.0.0.1 \
+  -e SSH_PORT=2222 \
+  -e BILI_ZONE_PORT=18787 \
+  -e LAN_HOST=dsh-lan \
+  -e LAN_PORT=3080 \
+  -e DEEPSEEK_API_KEY=sk-xxxx \
+  -v /path/to/your/workspace:/workspace \
+  --privileged \
+  dsh-multi-user:0.2.1-rc.2-hostnet
+```
+
+## 4. 端口与入口说明
+
+**bridge 版端口**（`-p` 映射）：
 
 | 端口 | 说明 |
 | --- | --- |
-| `3080` | 容器内 nginx 主入口，对外 Web 入口（映射到宿主机 `HOST_WEB_PORT`） |
+| 宿主 `3080` → 容器 `3080` | nginx 主入口，对外 Web 入口（`HOST_WEB_PORT:WEB_PORT`） |
 | `13080` | 容器内 dsh 本体监听口（不直接对外，由 nginx 反代） |
-| `18781` | 容器内 nginx 的 **bili 专用反代口**（映射到宿主机 `18787`） |
-| `18787` | bili（billion-context）本体监听口，**仅容器内回环 `127.0.0.1`**，不直接对外 |
-| `22` | 容器内 SSH（映射到宿主机 `SSH_HOST_PORT`） |
+| 容器 `18781` | nginx 的 **bili 专用反代口**（宿主 `18787` 映射到此） |
+| 容器 `18787` | bili（billion-context）本体监听口，**仅容器内回环 `127.0.0.1`**，不直接对外 |
+| 宿主 `220` → 容器 `22` | SSH |
+
+**host 版端口**（容器直占宿主端口，无映射）：
+
+| 端口 | 说明 |
+| --- | --- |
+| 宿主/容器 `3080` | nginx 主入口，绑 `0.0.0.0`，全网可达 |
+| `13080` | 容器内 dsh 本体监听口（不对外） |
+| 宿主/容器 `18787` | bili 本体，绑回环 `127.0.0.1`，仅服务器本机可达（远程靠 adminRelay 经 3080 中转） |
+| 宿主/容器 `2222` | sshd（避开宿主默认 22） |
 
 | 入口 | 用途 |
 | --- | --- |
@@ -134,25 +237,37 @@ docker run -d \
 | `http://<host>:18787/__bili/` | bili（billion-context）**Web UI 入口**，浏览器打开这个 |
 | `http://<host>:18787/__bili/plugin/status?conversationId=<会话ID>&fallback=latest` | bili **状态探测接口**（供插件调用，非页面）；必须带 `conversationId`，否则返回 400 |
 
-> 注意：成员入口走 `/lan/`，需要 `LAN_HOST` + `LAN_PORT` 与浏览器看到的 host:port 一致，否则 origin/trusted-host 校验会失败。
+> 注意：
+> - 成员入口走 `/lan/`，需要 `LAN_HOST` + `LAN_PORT` 与浏览器看到的 host:port 一致，否则 origin/trusted-host 校验会失败；且 `LAN_HOST` 必须与 owner 的 `127.0.0.1` **不同**（默认 `dsh-lan`），否则多用户插件启动校验失败、报 `not found`。
+> - host 版下 `18787` 绑回环，只能服务器本机访问；镜像已预置 bili 的 `security.adminRelay`，远程设备的面板会经 dsh web 入口（3080）中转访问（见下文说明）。
 
-### bili 反代链路（重要）
+### bili 链路（重要，两种构建方法不同）
 
-bili（billion-context）是镜像内置的 ACP 插件，负责会话上下文分析/压缩。插件探测与浏览器访问都写死 `http://127.0.0.1:18787/__bili/...`。但 bili 本体的监听地址在源码里硬编码为回环 `127.0.0.1:18787`——**Docker 的 `-p` 端口映射走容器网卡，无法命中回环地址**，直接映射 `18787:18787` 会得到 `Empty reply from server`。
+bili（billion-context）是镜像内置的 ACP 插件，负责会话上下文分析/压缩。插件探测与浏览器访问都写死 `http://127.0.0.1:18787/__bili/...`，而 bili 本体监听地址在源码里硬编码为回环 `127.0.0.1:18787`。两种构建方法解决这个问题的方式不同：
 
-解决办法是借助容器内 nginx 反代（nginx 与 bili 在同一网络命名空间，可用 `127.0.0.1` 访问回环）。完整链路：
+**bridge 版——nginx 反代**（Docker 的 `-p` 走容器网卡，无法命中回环，直接映射 `18787:18787` 会得到 `Empty reply from server`；须借同命名空间内的 nginx 反代）：
 
 ```
 宿主 18787  →[docker -p 18787:18781]→  容器 nginx 18781  →[location /__bili/ proxy_pass]→  容器 bili 127.0.0.1:18787
 ```
 
-nginx 的专用反代 server 块由 Dockerfile 的 entrypoint 在容器启动时生成（见 `location /__bili/`）。因此：
+- nginx 专用反代 server 块由 entrypoint 启动时生成；**重建镜像**才生效。
+- 启动脚本必须带 `-p 18787:18781`；`BILI_PROXY_PORT`（18781）≠ `BILI_ZONE_PORT`（18787）。
 
-- 需要**重建镜像**才能让 bili 反代配置生效（entrypoint 烘进镜像）。
-- 启动脚本必须带 `-p 18787:18781`，宿主 `18787` 才会通。
-- `BILI_PROXY_PORT`（18781）不能与 `BILI_ZONE_PORT`（18787）相同，否则 nginx 反代口与 bili 本体抢同一监听口。
-- 验证 UI：浏览器打开 `http://127.0.0.1:18787/__bili/`，应看到 bili 的 Web 界面。
-- 验证状态接口：`curl "http://127.0.0.1:18787/__bili/plugin/status?conversationId=x&fallback=latest"` 应返回 JSON（含 `ok` 字段）。注意该接口**必须带 `conversationId` 参数**，直接访问 `.../__bili/plugin/status`（无参数）会返回 400 `conversationId query parameter is required`，这是正常的参数校验，不代表链路不通。
+**host 版——直连**（host 网络下容器 `127.0.0.1:18787` 就是宿主 `127.0.0.1:18787`，探测 URL 直接命中 bili，无需 nginx 反代）：
+
+```
+宿主 127.0.0.1:18787  ==  容器 bili 127.0.0.1:18787   （无中转）
+```
+
+- 镜像里没有 18781 反代口，启动脚本无 `-p`；占用宿主 `18787`（绑回环，仅服务器本机可达）。
+- 远程设备的浏览器直连 `127.0.0.1:18787` 会指向它自己；**镜像已预置 bili 配置 `security.adminRelay: true`**（烘进镜像，两版一致），面板会经 dsh web 入口（3080）中转，远程设备访问 `http://dsh-lan:3080/` 即可使用面板。
+  - ⚠️ 安全提示：开启 adminRelay 后，任何能访问 dsh web 入口的人都能使用完整 bili 管理面板（含改配置、写凭证），请确保入口已受鉴权或反代保护；如需关闭，删除 Dockerfile 里预置配置块的 `security` 字段并重建镜像。
+
+**两版通用验证**（在服务器本机）：
+
+- UI：浏览器打开 `http://127.0.0.1:18787/__bili/`，应看到 bili 的 Web 界面。
+- 状态接口：`curl "http://127.0.0.1:18787/__bili/plugin/status?conversationId=x&fallback=latest"` 应返回 JSON（含 `ok` 字段）。该接口**必须带 `conversationId`**，无参数返回 400 `conversationId query parameter is required`，属正常参数校验，不代表链路不通。
 
 ### bili 状态探测接口与会话 ID
 
@@ -221,20 +336,21 @@ ping dsh-lan        # 应解析到 <服务器IP>
 
 然后通过 `http://dsh-lan:${HOST_WEB_PORT}/lan/` 访问成员入口。若成员分散在多台电脑，需**每台设备**都做同样的 hosts 映射；不想改 hosts 的话，可把 `LAN_HOST` 直接设为服务器 IP 或一个真实可解析的域名。
 
-## 4. 环境变量
+## 5. 环境变量
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `WEB_PORT` | `3080` | nginx 主入口监听口（对外 Web 入口） |
-| `DSH_PORT` | `13080` | dsh 本体监听口 |
-| `DSH_BIND` | `127.0.0.1` | dsh 本体监听地址 |
-| `BILI_ZONE_PORT` | `18787` | bili 本体监听口（容器内回环），同时作为宿主对外入口端口；插件探测写死 18787 |
-| `BILI_PROXY_PORT` | `18781` | nginx bili 专用反代口，宿主 `BILI_ZONE_PORT` 映射到此口 |
-| `LAN_HOST` | `dsh-lan` | 成员入口对外域名 |
-| `LAN_PORT` | 跟随 `WEB_PORT` | 成员入口对外端口 |
-| `DEEPSEEK_API_KEY` | — | 模型 API Key（必填） |
+| 变量 | 默认值 | 适用 | 说明 |
+| --- | --- | --- | --- |
+| `WEB_PORT` | `3080` | 两版 | nginx 主入口监听口（对外 Web 入口）。host 版下即宿主占用端口 |
+| `DSH_PORT` | `13080` | 两版 | dsh 本体监听口 |
+| `DSH_BIND` | `127.0.0.1` | 两版 | dsh 本体监听地址 |
+| `BILI_ZONE_PORT` | `18787` | 两版 | bili 本体监听口（回环）；插件探测写死 18787。bridge 版同时作为宿主对外入口，host 版即宿主回环端口 |
+| `BILI_PROXY_PORT` | `18781` | **仅 bridge 版** | nginx bili 专用反代口，宿主 `18787` 映射到此；host 版无此变量 |
+| `SSH_PORT` | `2222` | **仅 host 版** | 容器 sshd 端口（避开宿主默认 22）；bridge 版固定 22 并由 `-p 220:22` 映射 |
+| `LAN_HOST` | `dsh-lan` | 两版 | 成员入口对外域名，必须 ≠ owner 的 `127.0.0.1` |
+| `LAN_PORT` | 跟随 `WEB_PORT` | 两版 | 成员入口对外端口 |
+| `DEEPSEEK_API_KEY` | — | 两版 | 模型 API Key（必填） |
 
-## 5. 默认账号
+## 6. 默认账号
 
 | 账号 | 密码 | 说明 |
 | --- | --- | --- |
@@ -243,7 +359,7 @@ ping dsh-lan        # 应解析到 <服务器IP>
 
 > ⚠️ 生产环境请务必修改默认密码。
 
-## 6. 常用命令
+## 7. 常用命令
 
 ```sh
 # 查看日志

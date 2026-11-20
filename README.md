@@ -112,27 +112,43 @@ git clone --depth 1 --branch dsh-v0.2.1-rc.2 https://github.com/deepseek-ai/deep
 
 > 提示：`deepseek-harness` 是 pnpm monorepo，`docker build` 时会执行 `pnpm install --frozen-lockfile && pnpm run build` 编译出 `lib/` 产物，随后以「源码树 + tsx」方式运行。构建环境需能访问 GitHub 与 npm registry（Dockerfile 内已配置清华镜像加速 apt/pip）。
 
-仓库 `Docker/` 目录提供了完整的容器化部署方式，DSH 与插件打包进同一个镜像，开箱即用。构建命令在**本插件仓库目录**下执行（`docker build` 的上下文是插件仓库根目录）：
+仓库 `Docker/` 目录提供了完整的容器化部署方式，DSH 与插件打包进同一个镜像，开箱即用。**提供两种构建方法，按宿主机平台二选一**（插件/账号体系完全一致，仅网络模式不同）：
+
+| 方法 | 构建文件 / 启动脚本 | 网络模式 | 适用平台 |
+| --- | --- | --- | --- |
+| **bridge 版**（默认） | `Docker/Dockerfile` / `Docker/start-dsh-web.sh` | bridge + `-p` 端口映射，bili 经 nginx `18781` 反代 | Linux / Windows / macOS（含 Docker Desktop） |
+| **host 版** | `Docker/Dockerfile.hostnet` / `Docker/start-dsh-web-hostnet.sh` | `--network host`，bili 直连无反代，SSH 用 `2222` | **Linux / Windows**（Windows 需开启开关）；macOS 不支持 |
+
+> **⚠️ Windows 使用 host 版必须先开启实验开关**：在 Docker Desktop 的 **Settings → Resources → Network** 中勾选 **"Enable host networking"**，保存后 Docker Desktop 会重启。未开启时 `--network host` 不真正共享宿主机网络，请改用 bridge 版。实测 Windows 开启该开关后 host 版可正常访问 `3080` / `18787` 端口。macOS 的 Docker Desktop 不支持 host 版，请用 bridge 版。
+
+构建命令在**本插件仓库目录**下执行（`docker build` 的上下文是插件仓库根目录）：
 
 ```sh
 # 1. 获取本插件仓库并进入（docker build 在此目录执行）
 git clone https://github.com/ysz-leo/dsh-multi-user-service.git
 cd dsh-multi-user-service
 
-# 2. 构建镜像（在插件仓库根目录执行）
-docker build -t dsh-multi-user:0.2.1-rc.2 -f Docker/Dockerfile .
+# 2. 构建镜像（二选一）
+docker build -t dsh-multi-user:0.2.1-rc.2 -f Docker/Dockerfile .              # bridge 版（通用）
+# 或
+docker build -t dsh-multi-user:0.2.1-rc.2-hostnet -f Docker/Dockerfile.hostnet .  # host 版（Linux / Windows，Windows 需先开启 Enable host networking）
 
-# 3. 编辑 Docker/start-dsh-web.sh 顶部「配置区」（端口、域名、工作区路径、API Key）
+# 3. 编辑对应启动脚本顶部「配置区」（端口/域名/工作区路径/API Key）
+#    bridge: Docker/start-dsh-web.sh
+#    host:   Docker/start-dsh-web-hostnet.sh
 
 # 4. 一键启动
-./Docker/start-dsh-web.sh
+./Docker/start-dsh-web.sh           # bridge 版
+# 或
+./Docker/start-dsh-web-hostnet.sh   # host 版
 ```
 
-- Dockerfile 两阶段构建：先从上游 `dsh-v0.2.1-rc.2` 编译 DSH（源码树 + tsx），再组装运行环境（nginx 反代成员入口 + sshd + 本插件）。
+- 两个 Dockerfile 均为两阶段构建：先从上游 `dsh-v0.2.1-rc.2` 编译 DSH（源码树 + tsx），再组装运行环境（nginx 反代成员入口 + sshd + 本插件）。`Dockerfile.hostnet` 与 `Dockerfile` 的构建方式/插件清单完全相同，仅网络相关部分不同。
 - 镜像自包含，不依赖宿主机上的 DSH 源码目录；本插件从本仓库安装（`github:ysz-leo/dsh-multi-user-service`）。
-- 内置 bili（billion-context）上下文插件：nginx 用独立端口 `18781` 反代到容器回环 `18787`，宿主 `18787` 映射到该口；插件探测与浏览器均通过 `http://127.0.0.1:18787/__bili/` 访问。改此链路需重建镜像（entrypoint 烘进镜像）。详见 [`Docker/README.md`](Docker/README.md) 的「bili 反代链路」。
+- 内置 bili（billion-context）上下文插件：**bridge 版**用 nginx 独立端口 `18781` 反代到容器回环 `18787`（宿主 `18787` 映射到此口）；**host 版**下容器回环 `18787` 即宿主 `18787`，直连无需反代。两版插件探测与浏览器均通过 `http://127.0.0.1:18787/__bili/` 访问。改链路需重建镜像（entrypoint 烘进镜像）。详见 [`Docker/README.md`](Docker/README.md) 的「bili 链路」。
 - 镜像通过 Dockerfile 手动安装了一批内置插件（多用户服务、bili、better-sidebar 系列、PPT/SQL/插件市场等），完整清单见 [`Docker/README.md`](Docker/README.md) 的「镜像内手动安装的插件」。
-- 启动脚本会自动等待 dsh 就绪并打印管理入口、成员入口、bili 入口与访问 token。
+- 启动脚本会自动等待 dsh 就绪并打印管理入口、成员入口、bili 入口与访问 token；host 版脚本启动前还会预检宿主端口冲突。
+- 两种方法的完整对比（端口、链路、平台、环境变量）与操作步骤见 [`Docker/README.md`](Docker/README.md)。
 
 #### 配置 `LAN_HOST` 的 IP 映射（必做）
 

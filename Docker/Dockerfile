@@ -269,6 +269,23 @@ RUN dsh plugin --profile web add -w \
         @huanlin/dsh-plugin-better-sidebar-plugin-audio \
         github:Johnblur/dsh-bilingual-reader
 
+# ===== 预置 bili(billion-context) 配置：开启 adminRelay 支持远程访问面板 =====
+# 远程设备的浏览器无法直连容器内回环 127.0.0.1:18787（会指向设备自身），
+# 开启 security.adminRelay 后，bili 面板经 dsh web 入口(3080)中转，远程设备可访问。
+# ⚠️ 安全提示：adminRelay 允许任何能访问 dsh web 入口的人使用完整 bili 管理面板
+#    （含配置修改与凭证写入）。请确保该入口已受登录鉴权或反向代理保护；
+#    如需关闭，删除下面的 security 字段即可。
+# 放在插件安装之后，覆盖 billion-context 首次运行可能生成的默认配置。
+RUN mkdir -p /home/dsh/.config/billion-context && \
+    cat > /home/dsh/.config/billion-context/billion-context.json <<'EOF'
+{
+  "providers": {},
+  "security": {
+    "adminRelay": true
+  }
+}
+EOF
+
 # 仅作为文档性默认值，实际端口由 WEB_PORT / -p 决定
 # 18781 为 bili 专用 nginx 反代口（宿主 18787 映射到此），bili 本体 18787 仅容器内回环、不对外
 EXPOSE 3080 18781 22
