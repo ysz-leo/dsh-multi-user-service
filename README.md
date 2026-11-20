@@ -130,7 +130,9 @@ docker build -t dsh-multi-user:0.2.1-rc.2 -f Docker/Dockerfile .
 
 - Dockerfile 两阶段构建：先从上游 `dsh-v0.2.1-rc.2` 编译 DSH（源码树 + tsx），再组装运行环境（nginx 反代成员入口 + sshd + 本插件）。
 - 镜像自包含，不依赖宿主机上的 DSH 源码目录；本插件从本仓库安装（`github:ysz-leo/dsh-multi-user-service`）。
-- 启动脚本会自动等待 dsh 就绪并打印管理入口、成员入口与访问 token。
+- 内置 bili（billion-context）上下文插件：nginx 用独立端口 `18781` 反代到容器回环 `18787`，宿主 `18787` 映射到该口；插件探测与浏览器均通过 `http://127.0.0.1:18787/__bili/` 访问。改此链路需重建镜像（entrypoint 烘进镜像）。详见 [`Docker/README.md`](Docker/README.md) 的「bili 反代链路」。
+- 镜像通过 Dockerfile 手动安装了一批内置插件（多用户服务、bili、better-sidebar 系列、PPT/SQL/插件市场等），完整清单见 [`Docker/README.md`](Docker/README.md) 的「镜像内手动安装的插件」。
+- 启动脚本会自动等待 dsh 就绪并打印管理入口、成员入口、bili 入口与访问 token。
 
 #### 配置 `LAN_HOST` 的 IP 映射（必做）
 

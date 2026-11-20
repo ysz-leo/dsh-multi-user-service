@@ -9,6 +9,8 @@
 #   - DSH 源码通过 git clone 从上游固定 tag 拉取，镜像构建自包含，不依赖宿主机源码目录。
 #   - 本插件通过 dsh plugin 从 GitHub 仓库安装（github:ysz-leo/dsh-multi-user-service）。
 #   - 成员入口 /lan/ 由 nginx 反代到 dsh 本体，owner 入口直连，详情见 Docker/README.md。
+#   - bili(billion-context) 由 nginx 独立端口 18781 反代到容器内回环 18787，
+#     宿主机 18787 映射到该端口，供插件探测 / 浏览器访问 /__bili/，详情见 Docker/README.md。
 # =============================================================================
 
 # ================= 第一阶段：构建环境 =================
@@ -41,7 +43,9 @@ ENV WEB_PORT=3080 \
     DSH_PORT=13080 \
     DSH_BIND=127.0.0.1 \
     LAN_HOST=dsh-lan \
-    LAN_PORT="${LAN_PORT:-$WEB_PORT}"
+    LAN_PORT="${LAN_PORT:-$WEB_PORT}" \
+    BILI_ZONE_PORT=18787 \
+    BILI_PROXY_PORT=18781
 
 RUN useradd -m -s /bin/bash dsh
 
@@ -107,18 +111,43 @@ DSH_PORT="${DSH_PORT:-13080}"
 DSH_BIND="${DSH_BIND:-127.0.0.1}"
 LAN_HOST="${LAN_HOST:-dsh-lan}"
 LAN_PORT="${LAN_PORT:-$WEB_PORT}"     # 不填则跟随 WEB_PORT
+BILI_ZONE_PORT="${BILI_ZONE_PORT:-18787}"   # bili(billion-context) 本体监听口（容器内回环）
+BILI_PROXY_PORT="${BILI_PROXY_PORT:-18781}" # nginx bili 专用反代口（映射到宿主机 18787）
 
 if [ "${DSH_PORT}" = "${WEB_PORT}" ]; then
   echo "[entrypoint] ERROR: DSH_PORT(${DSH_PORT}) 与 WEB_PORT(${WEB_PORT}) 相同，nginx 与 dsh 会抢同一监听口" >&2
   exit 1
 fi
+if [ "${BILI_PROXY_PORT}" = "${BILI_ZONE_PORT}" ]; then
+  echo "[entrypoint] ERROR: BILI_PROXY_PORT(${BILI_PROXY_PORT}) 与 BILI_ZONE_PORT(${BILI_ZONE_PORT}) 相同，nginx 反代口会与 bili 本体抢同一监听口" >&2
+  exit 1
+fi
 
-echo "[entrypoint] WEB_PORT=${WEB_PORT}  DSH_PORT=${DSH_PORT}  DSH_BIND=${DSH_BIND}  LAN_HOST=${LAN_HOST}  LAN_PORT=${LAN_PORT}"
+echo "[entrypoint] WEB_PORT=${WEB_PORT}  DSH_PORT=${DSH_PORT}  DSH_BIND=${DSH_BIND}  LAN_HOST=${LAN_HOST}  LAN_PORT=${LAN_PORT}  BILI_ZONE_PORT=${BILI_ZONE_PORT}  BILI_PROXY_PORT=${BILI_PROXY_PORT}"
 
 # ---------- 1. 生成 nginx 配置 ----------
 sudo mkdir -p /etc/nginx/conf.d
 sudo tee /etc/nginx/conf.d/dsh.conf > /dev/null <<EOF
 map \$http_upgrade \$connection_upgrade { default upgrade; '' close; }
+
+# bili(billion-context) 专用反代 server：监听独立端口，专供宿主机 bili 入口映射。
+# 链路：宿主 18787 -> 容器 ${BILI_PROXY_PORT}(nginx) -> 127.0.0.1:${BILI_ZONE_PORT}(bili 本体回环)。
+# bili 本体 host 硬编码 127.0.0.1，Docker 的 -p 无法直接命中回环，必须借 nginx 同命名空间反代。
+server {
+    listen ${BILI_PROXY_PORT};
+    server_name _;
+
+    location /__bili/ {
+        proxy_pass http://127.0.0.1:${BILI_ZONE_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+}
 
 server {
     listen ${WEB_PORT};
@@ -241,7 +270,8 @@ RUN dsh plugin --profile web add -w \
         github:Johnblur/dsh-bilingual-reader
 
 # 仅作为文档性默认值，实际端口由 WEB_PORT / -p 决定
-EXPOSE 3080 22
+# 18781 为 bili 专用 nginx 反代口（宿主 18787 映射到此），bili 本体 18787 仅容器内回环、不对外
+EXPOSE 3080 18781 22
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
