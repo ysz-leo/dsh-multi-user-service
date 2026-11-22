@@ -2,34 +2,40 @@
 set -euo pipefail
 
 # =============================================================================
-# DSH 多用户服务 —— 容器启动脚本
+# DSH 多用户服务 —— 容器启动脚本（bridge 模式）
 # 用法：./Docker/start-dsh-web.sh
+# 配合统一镜像 Docker/Dockerfile（一个镜像支持 bridge / host 两种模式）。
 # 按需修改下方「配置区」后执行，脚本会自动：删旧容器 → 启动 → 等待 dsh 就绪 → 打印访问地址。
+#
+# bridge 模式：靠 -p 端口映射对外，sshd 默认 220（SSH_PORT 保持默认即可）；
+# bili 走 nginx 18781 反向代理（宿主 18787 → 容器 18781 → bili 回环 18787）。
+# 适用 Linux / Windows / macOS（含 Docker Desktop）。
 # =============================================================================
 
 # ========================== 配置区（按需修改） ==========================
 # 宿主机对外口 与 容器内部口 相互独立，均可按需更改：
 #   - 宿主机对外口（HOST_WEB_PORT / SSH_HOST_PORT）：浏览器/SSH 实际连接的宿主机端口，
 #     通过 docker run -p 映射到容器内部口；改这里不影响容器内监听口。
-#   - 容器内部口（WEB_PORT / DSH_PORT）：容器内 nginx / dsh 的监听口，
+#   - 容器内部口（WEB_PORT / DSH_PORT / SSH_PORT）：容器内 nginx / dsh / sshd 的监听口，
 #     改这里需同时保证与宿主机映射、以及 entrypoint 内部逻辑一致。
-IMAGE="dsh-multi-user:0.2.1-rc.2"   # 镜像名，与 docker build -t 保持一致
+IMAGE="dsh-multi-user:0.2.1-rc.2"   # 统一镜像名，与 docker build -t 保持一致
 CONTAINER="dsh-web"                  # 容器名
 
 # —— 宿主机对外口（按需更改）——
 HOST_WEB_PORT=3080     # 浏览器实际访问的宿主机端口
-SSH_HOST_PORT=220      # 宿主机 SSH 映射口
+SSH_HOST_PORT=220      # 宿主机 SSH 映射口（映射到容器 SSH_PORT）
 
 # —— 容器内部口（按需更改，与 Dockerfile ENV 一致，可覆盖）——
 WEB_PORT=3080          # 容器内 nginx 监听口
-DSH_PORT=13080         # 容器内 dsh 本体监听口（不对外，nginx 反代）
+DSH_PORT=13080         # 容器内 dsh 本体监听口（不对外，nginx 反向代理）
+SSH_PORT=220           # 容器内 sshd 端口（默认 220，配合 -p ${SSH_HOST_PORT}:${SSH_PORT} = 220:220）
 
-# —— bili(billion-context) 反代端口 ——
+# —— bili(billion-context) 反向代理端口 ——
 # 链路：宿主 BILI_ZONE_PORT -> 容器 BILI_PROXY_PORT(nginx) -> 127.0.0.1:BILI_ZONE_PORT(bili 本体回环)
 # 插件探测与浏览器访问写死宿主 18787，故 BILI_ZONE_PORT 默认 18787；
 # bili 本体 host 硬编码回环，-p 无法直接命中，必须经 nginx 专用口 BILI_PROXY_PORT 中转。
 BILI_ZONE_PORT=18787   # 宿主对外入口端口（=bili 本体监听口，插件写死 18787）
-BILI_PROXY_PORT=18781  # 容器内 nginx bili 专用反代口（18781 -> bili 18787）
+BILI_PROXY_PORT=18781  # 容器内 nginx bili 专用反向代理口（18781 -> bili 18787）
 
 # —— 对外可达地址：LAN_HOST + LAN_PORT 必须等于浏览器看到的 host:port ——
 # 建议在 hosts 文件中将域名映射到服务器 IP，例如：
@@ -55,7 +61,7 @@ if [[ "${DSH_PORT}" == "${WEB_PORT}" ]]; then
   exit 1
 fi
 if [[ "${BILI_PROXY_PORT}" == "${BILI_ZONE_PORT}" ]]; then
-  echo "错误：BILI_PROXY_PORT 与 BILI_ZONE_PORT 相同(${BILI_ZONE_PORT})，nginx 反代口会与 bili 本体抢同一监听口" >&2
+  echo "错误：BILI_PROXY_PORT 与 BILI_ZONE_PORT 相同(${BILI_ZONE_PORT})，nginx 反向代理口会与 bili 本体抢同一监听口" >&2
   exit 1
 fi
 if [[ "${DEEPSEEK_API_KEY}" == "sk-xxxx" ]]; then
@@ -69,11 +75,12 @@ docker run -d \
   --restart unless-stopped \
   --add-host=host.docker.internal:host-gateway \
   -p "${HOST_WEB_PORT}:${WEB_PORT}" \
-  -p "${SSH_HOST_PORT}:22" \
+  -p "${SSH_HOST_PORT}:${SSH_PORT}" \
   -p "${BILI_ZONE_PORT}:${BILI_PROXY_PORT}" \
   -e WEB_PORT="${WEB_PORT}" \
   -e DSH_PORT="${DSH_PORT}" \
   -e DSH_BIND="127.0.0.1" \
+  -e SSH_PORT="${SSH_PORT}" \
   -e BILI_ZONE_PORT="${BILI_ZONE_PORT}" \
   -e BILI_PROXY_PORT="${BILI_PROXY_PORT}" \
   -e LAN_HOST="${LAN_HOST}" \
@@ -83,7 +90,7 @@ docker run -d \
   --privileged \
   "$IMAGE"
 
-echo "容器已启动：$CONTAINER，等待 dsh web 就绪..."
+echo "容器已启动：$CONTAINER（bridge 模式），等待 dsh web 就绪..."
 
 # ---------- 等待并抓取 "dsh web:" 日志（最多 180 秒） ----------
 DSH_LINES=""
@@ -107,7 +114,7 @@ fi
 # ---------- 解析 URL / token（按行打印，多条都处理） ----------
 echo
 echo "============================================================"
-echo " dsh-web 访问信息"
+echo " dsh-web 访问信息（bridge 模式）"
 echo "============================================================"
 
 while IFS= read -r line; do
@@ -138,9 +145,10 @@ while IFS= read -r line; do
   echo "------------------------------------------------------------"
 done <<< "$DSH_LINES"
 
+echo " 网络模式  ：bridge（-p 端口映射）"
 echo " SSH       ：ssh -p ${SSH_HOST_PORT} dsh@${LAN_HOST}  (用户 dsh / 密码 dsh123)"
-echo " 容器内口  ：WEB_PORT=${WEB_PORT}  DSH_PORT=${DSH_PORT}  DSH_BIND=127.0.0.1  BILI_ZONE_PORT=${BILI_ZONE_PORT}  BILI_PROXY_PORT=${BILI_PROXY_PORT}"
-echo " 宿主机映射：${HOST_WEB_PORT} -> ${WEB_PORT}   ${SSH_HOST_PORT} -> 22   ${BILI_ZONE_PORT} -> ${BILI_PROXY_PORT}"
+echo " 容器内口  ：WEB=${WEB_PORT}  DSH=${DSH_PORT}  SSH=${SSH_PORT}  BILI_ZONE=${BILI_ZONE_PORT}  BILI_PROXY=${BILI_PROXY_PORT}"
+echo " 宿主映射  ：${HOST_WEB_PORT}->${WEB_PORT}   ${SSH_HOST_PORT}->${SSH_PORT}   ${BILI_ZONE_PORT}->${BILI_PROXY_PORT}"
 echo " bili UI   ：http://127.0.0.1:${BILI_ZONE_PORT}/__bili/  (浏览器打开这个)"
 echo " bili 探测 ：http://127.0.0.1:${BILI_ZONE_PORT}/__bili/plugin/status?conversationId=<会话ID>&fallback=latest  (状态接口，须带 conversationId，否则 400)"
 echo " bili 链路 ：宿主 ${BILI_ZONE_PORT} → nginx ${BILI_PROXY_PORT} → bili ${BILI_ZONE_PORT}"

@@ -1,16 +1,28 @@
 # =============================================================================
-# DSH 多用户服务 —— Docker 镜像
+# DSH 多用户服务 —— Docker 镜像（统一版：bridge / host 两种网络模式共用）
 # 基于 DSH v0.2.1-rc.2（源码树 + tsx 方式运行）+ 本插件（@ysz-leo/dsh-multi-user-service）
 #
 # 构建上下文：仓库根目录（含本 Dockerfile 所在位置）
 #   docker build -t dsh-multi-user:0.2.1-rc.2 -f Docker/Dockerfile .
 #
+# 一个镜像同时支持两种网络模式，由启动脚本决定如何跑：
+#   - bridge 版：docker run 时用 -p 映射端口，sshd 默认 220（SSH_PORT 保持默认即可，
+#                如 -p 220:220）；bili 走 nginx 18781 反向代理。适用 Linux/Windows/macOS。
+#   - host 版：docker run 用 --network host，用 -e SSH_PORT=221（三位数、非 22）
+#              避开 Linux 宿主默认 22；bili 直接通过宿主 18787 回环可达。
+#              Linux 原生 Docker Engine 开箱即用；用 Docker Desktop（Windows / macOS / Linux）
+#              需 4.34+ 开启 "Enable host networking"。
+#
+# 关键机制：sshd 监听端口默认 220（三位数），由 SSH_PORT 环境变量驱动——entrypoint 启动
+# sshd 前先删除构建期写入的 Port 行，再按 SSH_PORT 重写 sshd_config，故同一镜像既能
+# bridge（220）又能 host（221），不会因抢占宿主 22 导致容器起不来。
+#
 # 说明：
 #   - DSH 源码通过 git clone 从上游固定 tag 拉取，镜像构建自包含，不依赖宿主机源码目录。
 #   - 本插件通过 dsh plugin 从 GitHub 仓库安装（github:ysz-leo/dsh-multi-user-service）。
-#   - 成员入口 /lan/ 由 nginx 反代到 dsh 本体，owner 入口直连，详情见 Docker/README.md。
-#   - bili(billion-context) 由 nginx 独立端口 18781 反代到容器内回环 18787，
-#     宿主机 18787 映射到该端口，供插件探测 / 浏览器访问 /__bili/，详情见 Docker/README.md。
+#   - 成员入口 /lan/ 由 nginx 反向代理到 dsh 本体，owner 入口直连，详情见 Docker/README.md。
+#   - bili(billion-context) 由 nginx 独立端口 18781 反向代理到容器内回环 18787；bridge 模式
+#     宿主 18787 映射到此口，host 模式容器回环即宿主回环、反向代理口闲置不影响直连。
 # =============================================================================
 
 # ================= 第一阶段：构建环境 =================
@@ -39,13 +51,16 @@ RUN cd /app && pnpm dsh --version
 FROM node:22-slim
 
 # —— 运行时参数默认值（docker run -e 可覆盖）——
+# SSH_PORT：sshd 监听端口，默认 220（三位数）；bridge 配合 -p 220:220；host 模式用 221 避开宿主 22。
+# host 网络下 WEB_PORT / SSH_PORT / BILI_ZONE_PORT 即宿主机实际占用端口（无 -p 映射）。
 ENV WEB_PORT=3080 \
     DSH_PORT=13080 \
     DSH_BIND=127.0.0.1 \
     LAN_HOST=dsh-lan \
     LAN_PORT="${LAN_PORT:-$WEB_PORT}" \
     BILI_ZONE_PORT=18787 \
-    BILI_PROXY_PORT=18781
+    BILI_PROXY_PORT=18781 \
+    SSH_PORT=220
 
 RUN useradd -m -s /bin/bash dsh
 
@@ -112,27 +127,28 @@ DSH_BIND="${DSH_BIND:-127.0.0.1}"
 LAN_HOST="${LAN_HOST:-dsh-lan}"
 LAN_PORT="${LAN_PORT:-$WEB_PORT}"     # 不填则跟随 WEB_PORT
 BILI_ZONE_PORT="${BILI_ZONE_PORT:-18787}"   # bili(billion-context) 本体监听口（容器内回环）
-BILI_PROXY_PORT="${BILI_PROXY_PORT:-18781}" # nginx bili 专用反代口（映射到宿主机 18787）
+BILI_PROXY_PORT="${BILI_PROXY_PORT:-18781}" # nginx bili 专用反向代理口（映射到宿主机 18787）
+SSH_PORT="${SSH_PORT:-220}"                 # sshd 监听端口：默认 220
 
 if [ "${DSH_PORT}" = "${WEB_PORT}" ]; then
   echo "[entrypoint] ERROR: DSH_PORT(${DSH_PORT}) 与 WEB_PORT(${WEB_PORT}) 相同，nginx 与 dsh 会抢同一监听口" >&2
   exit 1
 fi
 if [ "${BILI_PROXY_PORT}" = "${BILI_ZONE_PORT}" ]; then
-  echo "[entrypoint] ERROR: BILI_PROXY_PORT(${BILI_PROXY_PORT}) 与 BILI_ZONE_PORT(${BILI_ZONE_PORT}) 相同，nginx 反代口会与 bili 本体抢同一监听口" >&2
+  echo "[entrypoint] ERROR: BILI_PROXY_PORT(${BILI_PROXY_PORT}) 与 BILI_ZONE_PORT(${BILI_ZONE_PORT}) 相同，nginx 反向代理口会与 bili 本体抢同一监听口" >&2
   exit 1
 fi
 
-echo "[entrypoint] WEB_PORT=${WEB_PORT}  DSH_PORT=${DSH_PORT}  DSH_BIND=${DSH_BIND}  LAN_HOST=${LAN_HOST}  LAN_PORT=${LAN_PORT}  BILI_ZONE_PORT=${BILI_ZONE_PORT}  BILI_PROXY_PORT=${BILI_PROXY_PORT}"
+echo "[entrypoint] WEB_PORT=${WEB_PORT}  DSH_PORT=${DSH_PORT}  DSH_BIND=${DSH_BIND}  LAN_HOST=${LAN_HOST}  LAN_PORT=${LAN_PORT}  BILI_ZONE_PORT=${BILI_ZONE_PORT}  BILI_PROXY_PORT=${BILI_PROXY_PORT}  SSH_PORT=${SSH_PORT}"
 
 # ---------- 1. 生成 nginx 配置 ----------
 sudo mkdir -p /etc/nginx/conf.d
 sudo tee /etc/nginx/conf.d/dsh.conf > /dev/null <<EOF
 map \$http_upgrade \$connection_upgrade { default upgrade; '' close; }
 
-# bili(billion-context) 专用反代 server：监听独立端口，专供宿主机 bili 入口映射。
+# bili(billion-context) 专用反向代理 server：监听独立端口，专供宿主机 bili 入口映射。
 # 链路：宿主 18787 -> 容器 ${BILI_PROXY_PORT}(nginx) -> 127.0.0.1:${BILI_ZONE_PORT}(bili 本体回环)。
-# bili 本体 host 硬编码 127.0.0.1，Docker 的 -p 无法直接命中回环，必须借 nginx 同命名空间反代。
+# bili 本体 host 硬编码 127.0.0.1，bridge 模式下 Docker 的 -p 无法直接命中回环，必须借 nginx 同命名空间反向代理。
 server {
     listen ${BILI_PROXY_PORT};
     server_name _;
@@ -199,6 +215,11 @@ cat > /app/docker-patch.yml <<EOF
 EOF
 
 # ---------- 3. 启动 sshd / nginx ----------
+# sshd 端口由 SSH_PORT 真正驱动：先去掉所有 Port 指令，再按 SSH_PORT 重写，
+# 保证环境变量生效且容器重启不累积多条 Port。默认 220，host 模式用 221。
+sudo sed -i -E '/^[[:space:]]*#?[[:space:]]*Port[[:space:]]+[0-9]+/d' /etc/ssh/sshd_config
+echo "Port ${SSH_PORT}" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+echo "[entrypoint] sshd 监听端口 = ${SSH_PORT}（由 SSH_PORT 环境变量驱动）"
 sudo mkdir -p /run/sshd
 sudo /usr/sbin/sshd
 sudo nginx -t
@@ -286,11 +307,13 @@ RUN mkdir -p /home/dsh/.config/billion-context && \
 }
 EOF
 
-# 仅作为文档性默认值，实际端口由 WEB_PORT / -p 决定
-# 18781 为 bili 专用 nginx 反代口（宿主 18787 映射到此），bili 本体 18787 仅容器内回环、不对外
-EXPOSE 3080 18781 22
+# 仅作为文档性默认值：web/bili 口由 WEB_PORT/BILI_* 决定，sshd 口由 SSH_PORT 决定（默认 220）
+# 18781 为 bili 专用 nginx 反向代理口（bridge 模式下宿主 18787 映射到此），bili 本体 18787 仅容器内回环
+EXPOSE 3080 18781 220
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
-# 构建示例：
+# 构建示例（一个镜像，两种启动方式）：
 #   docker build -t dsh-multi-user:0.2.1-rc.2 -f Docker/Dockerfile .
+#   bridge: -p 3080:3080 -p 220:220 -p 18787:18781
+#   host:   --network host -e SSH_PORT=221

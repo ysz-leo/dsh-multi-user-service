@@ -2,30 +2,30 @@
 set -euo pipefail
 
 # =============================================================================
-# DSH 多用户服务 —— 容器启动脚本（host 网络版）
+# DSH 多用户服务 —— 容器启动脚本（host 模式）
 # 用法：./Docker/start-dsh-web-hostnet.sh
+# 配合统一镜像 Docker/Dockerfile（一个镜像支持 bridge / host 两种模式）。
 #
-# ⚠️ 适用：Linux 服务器；Windows 需先在 Docker Desktop 的 Settings → Resources → Network
-#    勾选 "Enable host networking"（实验开关，保存后重启 Docker Desktop）；
-#    macOS 不支持，请用 bridge 版脚本 start-dsh-web.sh。
+# ⚠️ 适用：Linux 原生 Docker Engine 开箱即用；用 Docker Desktop（Windows / macOS / Linux）
+#    需 4.34+，先在 Settings → Resources → Network 勾选 "Enable host networking"（保存后重启）。
+#    Docker Desktop 版本过旧、无法开启该开关时，请改用 bridge 版脚本 start-dsh-web.sh。
 #
-# 与 start-dsh-web.sh（bridge 版）的区别，仅在「网络模式」相关部分：
-#   - --network host 替代所有 -p 映射（容器直接占用宿主机端口）
-#   - 去掉 nginx 18781 反代口，bili 直接通过宿主 18787 回环可达
-#   - sshd 端口 22 → 2222（避开 Linux 宿主默认 22）
-#   - 启动前增加宿主端口冲突预检
+# host 模式：--network host，容器直接占用宿主机端口，无 -p 映射。
+# 关键点：必须 -e SSH_PORT=<非 22 端口>（默认 220），否则 sshd 抢宿主默认 22 导致容器起不来；
+# bili 通过容器回环 18787 直连（host 下 == 宿主回环），无需 18781 反向代理中转。
 # =============================================================================
 
 # ========================== 配置区（按需修改） ==========================
 # host 网络下：WEB_PORT / SSH_PORT / BILI_ZONE_PORT 即容器直接占用的宿主机端口，无 -p 映射。
-IMAGE="dsh-multi-user:0.2.1-rc.2-hostnet"   # 镜像名，与 docker build -t 保持一致
-CONTAINER="dsh-web"                           # 容器名
+IMAGE="dsh-multi-user:0.2.1-rc.2"   # 统一镜像名（与 bridge 版相同），与 docker build -t 保持一致
+CONTAINER="dsh-web"                  # 容器名
 
 # —— 宿主机实际占用端口（host 网络下 == 容器内监听口）——
 WEB_PORT=3080          # dsh web 主入口 / nginx（占用宿主 3080，绑 0.0.0.0，全网可达）
-SSH_PORT=2222          # 容器 sshd 端口（占用宿主 2222，避开默认 22）
+SSH_PORT=220           # 容器 sshd 端口（占用宿主 220，避开默认 22，并与 bridge 的 220 错开）
 BILI_ZONE_PORT=18787   # bili 本体端口（占用宿主 18787，绑回环；插件探测写死 18787，一般不要改）
-DSH_PORT=13080         # dsh 本体监听口（不对外，nginx 反代）
+DSH_PORT=13080         # dsh 本体监听口（不对外，nginx 反向代理）
+BILI_PROXY_PORT=18781  # 镜像 nginx 默认反向代理口（host 下用不到，但镜像仍会监听，保留以匹配默认值/预检）
 
 # —— 对外可达地址：LAN_HOST + LAN_PORT 必须等于浏览器看到的 host:port ——
 # LAN_HOST 必须是与 owner UI(127.0.0.1) 不同的 hostname，否则多用户插件启动校验失败。
@@ -46,14 +46,14 @@ if [[ "${DSH_PORT}" == "${WEB_PORT}" ]]; then
   exit 1
 fi
 if [[ "${SSH_PORT}" == "22" ]]; then
-  echo "警告：SSH_PORT=22，host 网络下会与 Linux 宿主 sshd 抢占 22 端口，建议改成 2222" >&2
+  echo "警告：SSH_PORT=22，host 网络下会与 Linux 宿主 sshd 抢占 22 端口，建议改成 220" >&2
 fi
 if [[ "${DEEPSEEK_API_KEY}" == "sk-xxxx" ]]; then
   echo "提示：DEEPSEEK_API_KEY 仍是占位符 sk-xxxx，请修改脚本后重试。" >&2
 fi
 
-# ⚠️ host 网络直接占用宿主端口，先检查冲突（ss 可用时）
-for p in "${WEB_PORT}" "${SSH_PORT}" "${BILI_ZONE_PORT}"; do
+# host 网络直接占用宿主端口，先检查冲突（含镜像 nginx 会监听的 BILI_PROXY_PORT）
+for p in "${WEB_PORT}" "${SSH_PORT}" "${BILI_ZONE_PORT}" "${BILI_PROXY_PORT}"; do
   if command -v ss >/dev/null 2>&1; then
     if ss -tln 2>/dev/null | grep -qE ":${p}[[:space:]]"; then
       echo "错误：宿主端口 ${p} 已被占用，host 网络下容器将直接抢占该端口导致启动失败" >&2
@@ -69,11 +69,13 @@ docker run -d \
   --name "$CONTAINER" \
   --restart unless-stopped \
   --network host \
+  --add-host=host.docker.internal:host-gateway \
   -e WEB_PORT="${WEB_PORT}" \
   -e DSH_PORT="${DSH_PORT}" \
   -e DSH_BIND="127.0.0.1" \
   -e SSH_PORT="${SSH_PORT}" \
   -e BILI_ZONE_PORT="${BILI_ZONE_PORT}" \
+  -e BILI_PROXY_PORT="${BILI_PROXY_PORT}" \
   -e LAN_HOST="${LAN_HOST}" \
   -e LAN_PORT="${LAN_PORT}" \
   -e DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY}" \
@@ -81,7 +83,7 @@ docker run -d \
   --privileged \
   "$IMAGE"
 
-echo "容器已启动：$CONTAINER（host 网络），等待 dsh web 就绪..."
+echo "容器已启动：$CONTAINER（host 模式），等待 dsh web 就绪..."
 
 # ---------- 等待并抓取 "dsh web:" 日志（最多 180 秒） ----------
 DSH_LINES=""
@@ -105,7 +107,7 @@ fi
 # ---------- 解析 URL / token（host 网络下端口即宿主端口） ----------
 echo
 echo "============================================================"
-echo " dsh-web 访问信息（host 网络）"
+echo " dsh-web 访问信息（host 模式）"
 echo "============================================================"
 
 while IFS= read -r line; do
@@ -135,7 +137,7 @@ while IFS= read -r line; do
 done <<< "$DSH_LINES"
 
 echo " 网络模式  ：host（无 -p 映射，容器直接占用宿主端口）"
-echo " SSH       ：ssh -p ${SSH_PORT} dsh@<服务器IP>  (用户 dsh / 密码 dsh123)"
+echo " SSH       ：ssh -p ${SSH_PORT} dsh@<服务器IP 或 dsh-lan>  (用户 dsh / 密码 dsh123)"
 echo " 宿主端口  ：WEB=${WEB_PORT}  SSH=${SSH_PORT}  BILI=${BILI_ZONE_PORT}  (dsh内部=${DSH_PORT})"
 echo " bili UI   ：http://127.0.0.1:${BILI_ZONE_PORT}/__bili/  (服务器本机浏览器打开这个)"
 echo " bili 探测 ：http://127.0.0.1:${BILI_ZONE_PORT}/__bili/plugin/status?conversationId=<会话ID>&fallback=latest"

@@ -101,6 +101,8 @@ dsh plugin --profile web add -w github:ysz-leo/dsh-multi-user-service
 
 ### 使用 Docker 部署（可选）
 
+本仓库提供**开箱即用的 Docker 部署方式**：一个镜像内已同时打包 **DSH `dsh-v0.2.1-rc.2`**（上游固定版本，构建时已编译）与**本项目插件 `dsh-multi-user-service`**（含多用户服务、bili 等内置插件），只需构建一次即可得到可直接运行的完整服务，**无需手动 clone DSH 源码、编译或逐个安装插件**。`Docker/` 目录提供统一 Dockerfile 与 bridge / host 两种启动脚本，插件、账号体系与成员入口在两种模式下完全一致（详见 [`Docker/README.md`](Docker/README.md)）。
+
 #### 联网拉取 DSH 源码
 
 Dockerfile 在构建时通过 `git clone` 联网拉取上游 `deepseek-harness` 仓库的固定 tag（默认 `dsh-v0.2.1-rc.2`），这一步需要构建机能够访问 GitHub。整个过程自包含，用户无需手动 clone DSH 源码；若希望手动预先拉取（例如放到内网镜像仓库或离线构建），可在构建机单独执行下面的 clone 命令：
@@ -112,14 +114,14 @@ git clone --depth 1 --branch dsh-v0.2.1-rc.2 https://github.com/deepseek-ai/deep
 
 > 提示：`deepseek-harness` 是 pnpm monorepo，`docker build` 时会执行 `pnpm install --frozen-lockfile && pnpm run build` 编译出 `lib/` 产物，随后以「源码树 + tsx」方式运行。构建环境需能访问 GitHub 与 npm registry（Dockerfile 内已配置清华镜像加速 apt/pip）。
 
-仓库 `Docker/` 目录提供了完整的容器化部署方式，DSH 与插件打包进同一个镜像，开箱即用。**提供两种构建方法，按宿主机平台二选一**（插件/账号体系完全一致，仅网络模式不同）：
+仓库 `Docker/` 目录提供了完整的容器化部署方式，DSH 与插件打包进同一个镜像，开箱即用。**只需构建一个统一镜像**（`Docker/Dockerfile`），再按宿主机平台二选一启动模式（插件/账号体系完全一致，仅网络模式不同）：
 
-| 方法 | 构建文件 / 启动脚本 | 网络模式 | 适用平台 |
+| 模式 | 启动脚本 | 网络模式 | 适用平台 |
 | --- | --- | --- | --- |
-| **bridge 版**（默认） | `Docker/Dockerfile` / `Docker/start-dsh-web.sh` | bridge + `-p` 端口映射，bili 经 nginx `18781` 反代 | Linux / Windows / macOS（含 Docker Desktop） |
-| **host 版** | `Docker/Dockerfile.hostnet` / `Docker/start-dsh-web-hostnet.sh` | `--network host`，bili 直连无反代，SSH 用 `2222` | **Linux / Windows**（Windows 需开启开关）；macOS 不支持 |
+| **bridge**（默认） | `Docker/start-dsh-web.sh` | bridge + `-p` 端口映射，bili 经 nginx `18781` 反向代理，sshd 默认 `220` | Linux / Windows / macOS（含 Docker Desktop） |
+| **host** | `Docker/start-dsh-web-hostnet.sh` | `--network host`，bili 直连无反向代理，`-e SSH_PORT=221` | **Linux / Windows / macOS**（用 Docker Desktop 时需 4.34+ 并开启开关，含 Linux 上的 Docker Desktop） |
 
-> **⚠️ Windows 使用 host 版必须先开启实验开关**：在 Docker Desktop 的 **Settings → Resources → Network** 中勾选 **"Enable host networking"**，保存后 Docker Desktop 会重启。未开启时 `--network host` 不真正共享宿主机网络，请改用 bridge 版。实测 Windows 开启该开关后 host 版可正常访问 `3080` / `18787` 端口。macOS 的 Docker Desktop 不支持 host 版，请用 bridge 版。
+> **⚠️ 使用 Docker Desktop 时 host 模式必须先开启实验开关（Windows / macOS / Linux 通用）**：需 Docker Desktop **4.34 及以上**，在 **Settings → Resources → Network** 中勾选 **"Enable host networking"**，保存后 Docker Desktop 会重启。（Linux 也提供 Docker Desktop，用户量较少，多数 Linux 用户用的是原生 Docker Engine。）未开启时 `--network host` 不真正共享宿主机网络，请改用 bridge 模式。实测 Windows 开启该开关后 host 模式可正常访问 `3080` / `18787` 端口；macOS 从 Docker Desktop 4.34 起同样支持。**只有 Linux 原生 Docker Engine（非 Docker Desktop）开箱即用、无需此开关**。
 
 构建命令在**本插件仓库目录**下执行（`docker build` 的上下文是插件仓库根目录）：
 
@@ -128,27 +130,25 @@ git clone --depth 1 --branch dsh-v0.2.1-rc.2 https://github.com/deepseek-ai/deep
 git clone https://github.com/ysz-leo/dsh-multi-user-service.git
 cd dsh-multi-user-service
 
-# 2. 构建镜像（二选一）
-docker build -t dsh-multi-user:0.2.1-rc.2 -f Docker/Dockerfile .              # bridge 版（通用）
-# 或
-docker build -t dsh-multi-user:0.2.1-rc.2-hostnet -f Docker/Dockerfile.hostnet .  # host 版（Linux / Windows，Windows 需先开启 Enable host networking）
+# 2. 构建统一镜像（bridge / host 两种模式共用，只需构建一次）
+docker build -t dsh-multi-user:0.2.1-rc.2 -f Docker/Dockerfile .
 
 # 3. 编辑对应启动脚本顶部「配置区」（端口/域名/工作区路径/API Key）
-#    bridge: Docker/start-dsh-web.sh
-#    host:   Docker/start-dsh-web-hostnet.sh
+#    bridge: Docker/start-dsh-web.sh       （sshd 默认 220）
+#    host:   Docker/start-dsh-web-hostnet.sh（用 SSH_PORT=221，避开宿主 22）
 
-# 4. 一键启动
-./Docker/start-dsh-web.sh           # bridge 版
+# 4. 一键启动（二选一）
+./Docker/start-dsh-web.sh           # bridge 模式
 # 或
-./Docker/start-dsh-web-hostnet.sh   # host 版
+./Docker/start-dsh-web-hostnet.sh   # host 模式
 ```
 
-- 两个 Dockerfile 均为两阶段构建：先从上游 `dsh-v0.2.1-rc.2` 编译 DSH（源码树 + tsx），再组装运行环境（nginx 反代成员入口 + sshd + 本插件）。`Dockerfile.hostnet` 与 `Dockerfile` 的构建方式/插件清单完全相同，仅网络相关部分不同。
+- `Dockerfile` 为两阶段构建：先从上游 `dsh-v0.2.1-rc.2` 编译 DSH（源码树 + tsx），再组装运行环境（nginx 反向代理成员入口 + sshd + 本插件）。镜像内 sshd 端口由 `SSH_PORT` 环境变量动态驱动（entrypoint 启动时重写 `sshd_config` 的 `Port`），所以同一镜像 bridge 保持默认 `220`、host 用 `221` 即可，无需分别构建。
 - 镜像自包含，不依赖宿主机上的 DSH 源码目录；本插件从本仓库安装（`github:ysz-leo/dsh-multi-user-service`）。
-- 内置 bili（billion-context）上下文插件：**bridge 版**用 nginx 独立端口 `18781` 反代到容器回环 `18787`（宿主 `18787` 映射到此口）；**host 版**下容器回环 `18787` 即宿主 `18787`，直连无需反代。两版插件探测与浏览器均通过 `http://127.0.0.1:18787/__bili/` 访问。改链路需重建镜像（entrypoint 烘进镜像）。详见 [`Docker/README.md`](Docker/README.md) 的「bili 链路」。
+- 内置 bili（billion-context）上下文插件：**bridge 模式**用 nginx 独立端口 `18781` 反向代理到容器回环 `18787`（宿主 `18787` 映射到此口）；**host 模式**下容器回环 `18787` 即宿主 `18787`，直连无需反向代理。两种模式插件探测与浏览器均通过 `http://127.0.0.1:18787/__bili/` 访问。改链路需重建镜像（entrypoint 烘进镜像）。详见 [`Docker/README.md`](Docker/README.md) 的「bili 链路」。
 - 镜像通过 Dockerfile 手动安装了一批内置插件（多用户服务、bili、better-sidebar 系列、PPT/SQL/插件市场等），完整清单见 [`Docker/README.md`](Docker/README.md) 的「镜像内手动安装的插件」。
-- 启动脚本会自动等待 dsh 就绪并打印管理入口、成员入口、bili 入口与访问 token；host 版脚本启动前还会预检宿主端口冲突。
-- 两种方法的完整对比（端口、链路、平台、环境变量）与操作步骤见 [`Docker/README.md`](Docker/README.md)。
+- 启动脚本会自动等待 dsh 就绪并打印管理入口、成员入口、bili 入口与访问 token；host 模式脚本启动前还会预检宿主端口冲突。
+- 两种模式的完整对比（端口、链路、平台、环境变量）与操作步骤见 [`Docker/README.md`](Docker/README.md)。
 
 #### 配置 `LAN_HOST` 的 IP 映射（必做）
 
@@ -168,6 +168,8 @@ docker build -t dsh-multi-user:0.2.1-rc.2-hostnet -f Docker/Dockerfile.hostnet .
 
 完成后用 `ping dsh-lan` 验证能解析到服务器 IP，再用 `http://dsh-lan:${HOST_WEB_PORT}/lan/` 访问成员入口。若成员分布在多台电脑，需在**每一台**访问设备上都做同样的 hosts 映射；如果不想改 hosts，也可把 `LAN_HOST` 直接改成服务器的 IP 地址或一个真实可解析的域名。
 
+> ⚠️ 注意：直接写死 IP（或域名）后，镜像只认这个地址——**一旦服务器 IP 变动，多用户服务页面将无法打开**，除非重新设置并修改 `LAN_HOST` 等相关配置。因此更推荐用可解析的主机名（如 `dsh-lan` 配合 hosts / DNS），IP 变化时只需改解析、不必动服务配置。
+
 完整说明（端口、环境变量、默认账号、常用命令）见 [`Docker/README.md`](Docker/README.md)。
 
 ### 2. 完成首次设置
@@ -177,7 +179,7 @@ docker build -t dsh-multi-user:0.2.1-rc.2-hostnet -f Docker/Dockerfile.hostnet .
 3. 按向导确认成员数据目录，可选用默认只读的推荐共享目录；推荐目录会在完成设置时创建。
 4. 设置服务登录域名或 IP，核对当前服务端口与模型状态，再完成设置。之后管理员和成员都通过同一服务入口登录，角色只认服务端账号授权。
 
-例如 `http://team-server.local:18620/lan/`。主机名解析由部署网络提供，例如 mDNS；插件保存域名入口并保留备用 IP 地址。已有安装沿用现有配置，无需重新初始化。
+例如 bridge 模式下默认的 `http://dsh-lan:3080/lan/`。主机名解析由部署网络提供（如 hosts 映射、DNS 或 mDNS）；插件保存域名入口并保留备用 IP 地址。已有安装沿用现有配置，无需重新初始化。
 
 ### 3. 添加成员
 
