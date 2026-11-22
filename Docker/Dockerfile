@@ -50,9 +50,35 @@ RUN cd /app && pnpm dsh --version
 # ================= 第二阶段：运行环境 =================
 FROM node:22-slim
 
-# —— 运行时参数默认值（docker run -e 可覆盖）——
-# SSH_PORT：sshd 监听端口，默认 220（三位数）；bridge 配合 -p 220:220；host 模式用 221 避开宿主 22。
-# host 网络下 WEB_PORT / SSH_PORT / BILI_ZONE_PORT 即宿主机实际占用端口（无 -p 映射）。
+# ================= 环境变量说明 =================
+# 【一】镜像内环境变量（下方 ENV 定义，docker run -e 可覆盖，进容器后 env 可见）
+#   两模式共有（内部监听口/地址）：
+#   - WEB_PORT         容器内 nginx 主入口监听口（默认 3080）。bridge 下由 -p 映射到宿主
+#                      HOST_WEB_PORT；host 下即容器直接占用的宿主端口。
+#   - DSH_PORT         容器内 dsh 本体监听口（默认 13080），不对外暴露，由 nginx 反向代理。
+#   - DSH_BIND         dsh 本体监听地址（默认 127.0.0.1）。
+#   - LAN_HOST         成员入口对外 hostname（默认 dsh-lan），必须与 owner UI 的 127.0.0.1
+#                      不同，否则多用户插件启动校验失败；需在 hosts / DNS 解析到服务器 IP。
+#   - LAN_PORT         成员入口对外端口（默认跟随 WEB_PORT），须等于浏览器实际看到的 host:port。
+#   - SSH_PORT         容器内 sshd 监听口（默认 220，三位数）；entrypoint 启动时动态写入
+#                      sshd_config。bridge 保持 220 并用 -p 映射；host 下即占用的宿主端口，
+#                      必须非 22（否则与宿主 sshd 抢 22 导致容器起不来）。
+#   - BILI_ZONE_PORT   bili(billion-context) 本体监听口（默认 18787，容器内回环 127.0.0.1）；
+#                      插件探测与浏览器访问写死 18787，一般不要改。
+#   模式相关（两模式语义不同）：
+#   - BILI_PROXY_PORT  nginx 的 bili 专用反向代理口（默认 18781）。★bridge 模式核心依赖：
+#                      宿主 18787 → 容器 18781 → bili 回环 18787（本体绑回环，-p 无法直连）；
+#                      host 模式下容器回环即宿主回环、bili 直连，此口闲置但仍会监听。
+#
+# 【二】启动脚本层的宿主端口变量（★非镜像 ENV，不进容器，env 里看不到；仅 bridge 模式有）
+#   这些变量在 start-dsh-web.sh 里定义，只用于拼 docker run 的 -p 映射，不会传进容器：
+#   - HOST_WEB_PORT    浏览器实际访问的宿主机端口（bridge 默认 3080）
+#                      → docker run -p ${HOST_WEB_PORT}:${WEB_PORT}
+#   - SSH_HOST_PORT    SSH 实际连接的宿主机端口（bridge 默认 220）
+#                      → docker run -p ${SSH_HOST_PORT}:${SSH_PORT}
+#   host 模式（--network host）无 -p 映射，WEB_PORT / SSH_PORT / BILI_ZONE_PORT 就是宿主实际
+#   占用端口，因此不需要 HOST_WEB_PORT / SSH_HOST_PORT 这类映射变量。
+# ==================================================
 ENV WEB_PORT=3080 \
     DSH_PORT=13080 \
     DSH_BIND=127.0.0.1 \

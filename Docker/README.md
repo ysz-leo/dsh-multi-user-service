@@ -357,17 +357,35 @@ ping dsh-lan        # 应解析到 <服务器IP>
 
 ## 5. 环境变量
 
+环境变量分两类，注意区分（与 `Dockerfile` 顶部「环境变量说明」一致）：
+
+- **镜像内环境变量**：Dockerfile `ENV` 定义 / `docker run -e` 注入，进容器后 `env` 可见，两模式共用。
+- **启动脚本层的宿主端口变量**：仅在 bridge 启动脚本里定义，用于拼 `docker run -p` 映射，**不进容器**（`env` 里看不到），bridge 模式独有。
+
+### 5.1 镜像内环境变量（两模式共用）
+
 | 变量 | 默认值 | 适用 | 说明 |
 | --- | --- | --- | --- |
-| `WEB_PORT` | `3080` | 两模式 | nginx 主入口监听口（对外 Web 入口）。host 模式下即宿主占用端口 |
-| `DSH_PORT` | `13080` | 两模式 | dsh 本体监听口 |
+| `WEB_PORT` | `3080` | 两模式 | nginx 主入口监听口（对外 Web 入口）。bridge 下由 `-p` 映射到宿主 `HOST_WEB_PORT`；host 模式下即容器直接占用的宿主端口 |
+| `DSH_PORT` | `13080` | 两模式 | dsh 本体监听口（不对外，由 nginx 反向代理） |
 | `DSH_BIND` | `127.0.0.1` | 两模式 | dsh 本体监听地址 |
-| `BILI_ZONE_PORT` | `18787` | 两模式 | bili 本体监听口（回环）；插件探测写死 18787。bridge 模式同时作为宿主对外入口，host 模式即宿主回环端口 |
-| `BILI_PROXY_PORT` | `18781` | 两模式 | nginx bili 专用反向代理口，bridge 模式下宿主 `18787` 映射到此；host 模式下仍在监听但用不到 |
+| `BILI_ZONE_PORT` | `18787` | 两模式 | bili 本体监听口（容器内回环）；插件探测与浏览器访问写死 18787，一般不要改。bridge 模式同时作为宿主对外入口，host 模式即宿主回环端口 |
+| `BILI_PROXY_PORT` | `18781` | 两模式 | nginx bili 专用反向代理口。**bridge 模式核心依赖**：宿主 `18787` → 容器 `18781` → bili 回环 `18787`（本体绑回环，`-p` 无法直连）；host 模式下容器回环即宿主回环、bili 直连，此口闲置但仍监听 |
 | `SSH_PORT` | `220` | 两模式 | 容器 sshd 端口（默认三位数 `220`，entrypoint 启动时动态写入 sshd_config）。bridge 保持默认 `220` 并用 `-p 220:220` 映射；host 模式用 `221` 以避开宿主默认 22 并与 bridge 错开 |
-| `LAN_HOST` | `dsh-lan` | 两模式 | 成员入口对外域名，必须 ≠ owner 的 `127.0.0.1` |
-| `LAN_PORT` | 跟随 `WEB_PORT` | 两模式 | 成员入口对外端口 |
-| `DEEPSEEK_API_KEY` | — | 两模式 | 模型 API Key |
+| `LAN_HOST` | `dsh-lan` | 两模式 | 成员入口对外域名，必须 ≠ owner 的 `127.0.0.1`，且需在 hosts / DNS 解析到服务器 IP |
+| `LAN_PORT` | 跟随 `WEB_PORT` | 两模式 | 成员入口对外端口，须等于浏览器实际看到的 host:port |
+| `DEEPSEEK_API_KEY` | — | 两模式 | 模型 API Key（必填） |
+
+### 5.2 启动脚本层的宿主端口变量（bridge 模式独有，非 ENV）
+
+下列变量**不是镜像环境变量**，只在 `start-dsh-web.sh` 配置区里定义，用于拼 `docker run -p <宿主口>:<容器口>` 映射；它们不会传进容器，进容器 `env` 看不到：
+
+| 变量 | 默认值 | 适用 | 说明 |
+| --- | --- | --- | --- |
+| `HOST_WEB_PORT` | `3080` | **仅 bridge** | 浏览器实际访问的宿主机端口，映射到容器 `WEB_PORT`：`-p ${HOST_WEB_PORT}:${WEB_PORT}` |
+| `SSH_HOST_PORT` | `220` | **仅 bridge** | SSH 实际连接的宿主机端口，映射到容器 `SSH_PORT`：`-p ${SSH_HOST_PORT}:${SSH_PORT}` |
+
+> host 模式（`--network host`）无 `-p` 映射，`WEB_PORT` / `SSH_PORT` / `BILI_ZONE_PORT` 就是容器直接占用的宿主端口，因此**不需要** `HOST_WEB_PORT` / `SSH_HOST_PORT` 这类映射变量。
 
 ## 6. 默认账号
 
