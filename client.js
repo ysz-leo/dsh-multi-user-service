@@ -92,7 +92,7 @@ window.__ModuleLoader__.load({
         metadataOnly: '本页管理账号与模型授权，不会改变个人 DSH 会话。成员项目默认跟随兼容的 DSH 启动环境；可选自定义覆盖请在独立成员入口以管理员账号管理。',
         workspace: '工作区', usage: '用量广场', admin: '管理', refresh: '刷新', loading: '正在加载…', pending: '正在提交…',
         login: '登录', redeem: '接受邀请', bootstrap: '创建首位管理员', logout: '退出',
-        username: '用户名', displayName: '显示名', password: '密码', longPassword: '长密码（至少 16 个字符）',
+        username: '用户名', displayName: '显示名', password: '密码', longPassword: '密码（至少 8 个字符）',
         inviteToken: '邀请令牌', setupNote: '仅首次初始化使用。此操作必须由当前所有者明确提交，不会自动创建管理员。',
         setupConsent: '我确认以当前 DSH 所有者连接初始化首位管理员', invitationOnly: '不开放公开注册；新成员需要管理员邀请。',
         rememberLogin: '保持登录并记住用户名', memoryOnly: '保持登录通过 HttpOnly Cookie 恢复，可随时退出撤销。这里只保存用户名；密码交给浏览器密码管理器，需由你选择保存，页面不会将密码或令牌写入本地存储。',
@@ -152,7 +152,7 @@ window.__ModuleLoader__.load({
         metadataOnly: 'This panel manages accounts and model authorization without changing personal DSH conversations. Projects follow the compatible DSH startup environment by default. Administrators can manage optional custom overrides through the separate member entry.',
         workspace: 'Workspace', usage: 'Usage board', admin: 'Administration', refresh: 'Refresh', loading: 'Loading…', pending: 'Submitting…',
         login: 'Sign in', redeem: 'Accept invitation', bootstrap: 'Create first administrator', logout: 'Sign out',
-        username: 'Username', displayName: 'Display name', password: 'Password', longPassword: 'Long password (at least 16 characters)',
+        username: 'Username', displayName: 'Display name', password: 'Password', longPassword: 'Password (at least 8 characters)',
         inviteToken: 'Invitation token', setupNote: 'First-time initialization only. The current owner must explicitly submit this operation; an administrator is never created automatically.',
         setupConsent: 'I confirm initialization of the first administrator through this DSH owner connection', invitationOnly: 'No public sign-up. New members need an administrator invitation.',
         rememberLogin: 'Stay signed in and remember username', memoryOnly: 'Persistent sign-in is restored through an HttpOnly cookie and can be revoked by signing out. Only the username is saved here. Choose to save passwords in your browser’s password manager; this page never stores passwords or tokens in local storage.',
@@ -1116,8 +1116,8 @@ brandingTab: '品牌外观', brandingTitle: '品牌标识', brandingNote: '自�
               if (await run('password.change', { currentPassword: data.get('currentPassword'), password: data.get('password') })) form.reset();
             } }, h('fieldset', { className: 'lanw-fieldset lanw-stack', disabled: pending },
               h(Field, { label: t('currentPassword'), name: 'currentPassword', type: 'password', required: true, maxLength: 1024, autoComplete: 'current-password' }),
-              h(Field, { label: t('longPassword'), name: 'password', type: 'password', required: true, minLength: 16, maxLength: 1024, autoComplete: 'new-password' }),
-              h(Field, { label: t('confirmPassword'), name: 'confirmPassword', type: 'password', required: true, minLength: 16, maxLength: 1024, autoComplete: 'new-password' }),
+              h(Field, { label: t('longPassword'), name: 'password', type: 'password', required: true, minLength: 8, maxLength: 1024, autoComplete: 'new-password' }),
+              h(Field, { label: t('confirmPassword'), name: 'confirmPassword', type: 'password', required: true, minLength: 8, maxLength: 1024, autoComplete: 'new-password' }),
               problem && h('p', { role: 'alert', className: 'lanw-error' }, t(problem)), h(Button, { type: 'submit', primary: true, disabled: pending }, t(pending ? 'pending' : 'changePassword')))));
         }
         function InviteLink({ memberUrl, inviteToken }) {
@@ -2492,7 +2492,7 @@ brandingTab: '品牌外观', brandingTitle: '品牌标识', brandingNote: '自�
               ...(data.has('mcpServersMode') ? { mcpServers: data.get('mcpServersMode') === 'custom' ? data.getAll('mcpServerNames') : null } : {}),
               ...(data.has('cliToolsMode') ? { cliTools: data.get('cliToolsMode') === 'custom' ? data.getAll('cliNames') : null } : {}),
               ...(data.has('sharedDirectories') ? { sharedDirectories: JSON.parse(data.get('sharedDirectories')) } : {}) } });
-          const passwordField = autocomplete => h(Field, { label: t('longPassword'), name: 'password', type: 'password', required: true, minLength: 16, maxLength: 1024, autoComplete: autocomplete });
+          const passwordField = autocomplete => h(Field, { label: t('longPassword'), name: 'password', type: 'password', required: true, minLength: 8, maxLength: 1024, autoComplete: autocomplete });
           const nameFields = () => h(React.Fragment, null,
             h(Field, { label: t('username'), name: 'username', required: true, maxLength: 64, autoComplete: 'username', autoCapitalize: 'none', spellCheck: false, 'data-modal-autofocus': true }),
             h(Field, { label: t('displayName'), name: 'displayName', required: true, maxLength: 100, autoComplete: 'nickname' }));

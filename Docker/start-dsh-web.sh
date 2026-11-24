@@ -54,8 +54,13 @@ MAX_TEXT_BYTES=67108864      # 64 MiB，文本单页上限
 # —— 工作区挂载（成员会话数据所在目录，务必改成你自己的路径）——
 WORKSPACE="/path/to/your/workspace"
 
-# —— 模型 API Key（必填，替换为你自己的 key）——
-DEEPSEEK_API_KEY="sk-xxxx"
+# —— 模型 API Key（可选，默认留空）——
+# 留空时容器不注入无效 key，避免误切到 deepseek-official 路由时，
+# 拿占位符 key 连接 api.deepseek.com 触发 upstream-reset 重试告警。
+# 若确实要用 deepseek-official / deepseek-flash：
+#   1) 在此填真实 key（重建容器后生效）；或
+#   2) 在 Web 界面「设置 → 模型」配置凭据（推荐，重建容器不丢失）。
+DEEPSEEK_API_KEY=""
 # ========================================================================
 
 # 一致性校验
@@ -71,8 +76,9 @@ if [[ "${BILI_PROXY_PORT}" == "${BILI_ZONE_PORT}" ]]; then
   echo "错误：BILI_PROXY_PORT 与 BILI_ZONE_PORT 相同(${BILI_ZONE_PORT})，nginx 反向代理口会与 bili 本体抢同一监听口" >&2
   exit 1
 fi
-if [[ "${DEEPSEEK_API_KEY}" == "sk-xxxx" ]]; then
-  echo "提示：DEEPSEEK_API_KEY 仍是占位符 sk-xxxx，请修改脚本后重试。" >&2
+if [[ -z "${DEEPSEEK_API_KEY}" ]]; then
+  echo "提示：DEEPSEEK_API_KEY 留空（未注入容器）。若用 MiniMax 等其它模型无需此项；" \
+       "若要走 deepseek-official 路由，请在 Web 界面「设置 → 模型」配置 Key 或在本脚本填入真实 key。" >&2
 fi
 
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true

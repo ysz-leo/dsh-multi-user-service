@@ -137,8 +137,8 @@ export function username(value) {
 }
 
 export function password(value) {
-  if (typeof value !== 'string' || value.length < 12 || value.length > 1024) {
-    reject('INVALID_INPUT', 'Password must contain 12–1024 characters.');
+  if (typeof value !== 'string' || value.length < 8 || value.length > 1024) {
+    reject('INVALID_INPUT', 'Password must contain 8–1024 characters.');
   }
   return value;
 }

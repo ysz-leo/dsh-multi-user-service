@@ -84,7 +84,7 @@ docker build -t dsh-multi-user:0.2.1-rc.2 -f Docker/Dockerfile .
 | 插件 | 版本 / 来源 | 用途简述 |
 | --- | --- | --- |
 | `@ysz-leo/dsh-multi-user-service` | `github:ysz-leo/dsh-multi-user-service`（本仓库，单独一条指令） | 本插件：提供 `/lan/` 多用户成员入口及成员/管理员账号与权限体系 |
-| `@linxin666/dsh-web-all` | `0.4.2`（npm） | Web 功能增强合集 |
+| `@linxin666/dsh-web-all` | `0.4.7`（npm） | Web 功能增强合集（0.4.7 修复 task-board 未传 `peer` 导致的日志刷屏） |
 | `dshmarket` | npm（未锁版本） | 插件市场 |
 | `dsh-ppt-master` | `github:pn1024/dsh-ppt-master` | PPT 生成 / 处理 |
 | `dsh-plugin` | `2.2.7`（npm） | 插件管理辅助 |
@@ -148,7 +148,7 @@ LAN_HOST=dsh-lan                      # 对外域名（建议在 hosts 里映射
 MAX_FILE_BYTES=268435456              # 侧栏预览「整文件读取」上限（默认 256 MiB，原版仅 32 MiB）
 MAX_TEXT_BYTES=67108864               # 侧栏预览「文本单页」上限（默认 64 MiB，原版仅 2 MiB，点开大文本报 too large 多半是它）
 WORKSPACE="/path/to/your/workspace"   # 成员会话数据目录（务必改成你自己的路径）
-DEEPSEEK_API_KEY="sk-xxxx"            # 你的模型 API Key（必填）
+DEEPSEEK_API_KEY=""                   # 模型 API Key，默认留空（可选）；用 MiniMax 等其它模型无需此项
 ```
 
 然后执行：
@@ -169,7 +169,7 @@ LAN_HOST=dsh-lan       # 必须与 owner 的 127.0.0.1 不同，否则多用户�
 MAX_FILE_BYTES=268435456  # 侧栏预览「整文件读取」上限（默认 256 MiB，原版仅 32 MiB）
 MAX_TEXT_BYTES=67108864   # 侧栏预览「文本单页」上限（默认 64 MiB，原版仅 2 MiB）
 WORKSPACE="/path/to/your/workspace"
-DEEPSEEK_API_KEY="sk-xxxx"
+DEEPSEEK_API_KEY=""       # 模型 API Key，默认留空（可选）；用 MiniMax 等其它模型无需此项
 ```
 
 然后执行（脚本会先预检宿主端口冲突，占用则报错退出）：
@@ -207,7 +207,7 @@ docker run -d \
   -e MAX_TEXT_BYTES=67108864 \
   -e LAN_HOST=dsh-lan \
   -e LAN_PORT=3080 \
-  -e DEEPSEEK_API_KEY=sk-xxxx \
+  -e DEEPSEEK_API_KEY="" \
   -v /path/to/your/workspace:/workspace \
   --privileged \
   dsh-multi-user:0.2.1-rc.2
@@ -229,11 +229,13 @@ docker run -d \
   -e MAX_TEXT_BYTES=67108864 \
   -e LAN_HOST=dsh-lan \
   -e LAN_PORT=3080 \
-  -e DEEPSEEK_API_KEY=sk-xxxx \
+  -e DEEPSEEK_API_KEY="" \
   -v /path/to/your/workspace:/workspace \
   --privileged \
   dsh-multi-user:0.2.1-rc.2
 ```
+
+> `-e DEEPSEEK_API_KEY=""` 表示不注入模型 API Key（默认留空）。走 MiniMax 等其它模型无需此项；若要用 DeepSeek 官方路由，请填真实 key，或在 Web 界面「设置 → 模型」配置凭据（推荐，重建容器不丢失）。留空可避免误切官方路由时拿占位符 key 连接 `api.deepseek.com` 触发 `upstream-reset` 告警。
 
 ## 4. 端口与入口说明
 
@@ -400,7 +402,7 @@ ping dsh-lan        # 应解析到 <服务器IP>
 | `LAN_PORT` | 跟随 `WEB_PORT` | 两模式 | 成员入口对外端口，须等于浏览器实际看到的 host:port |
 | `MAX_FILE_BYTES` | `268435456`（256 MiB） | 两模式 | **侧栏文件预览的整文件读取上限**，对应 `workspace-files.maxFileBytes`（原版 32 MiB）。超限报 `workspace-file/too-large`。整文件读入内存，勿设过大 |
 | `MAX_TEXT_BYTES` | `67108864`（64 MiB） | 两模式 | **侧栏文件预览的文本单页上限**，对应 `workspace-files.maxBytes`（原版仅 2 MiB）。侧栏默认走文本分页预览（`read`），点开大文本报 "too large" 多半是这个值在起作用——上一版只调 `maxFileBytes` 不解决此场景。镜像通过 patch 同时调大两者，勿设过大 |
-| `DEEPSEEK_API_KEY` | — | 两模式 | 模型 API Key（必填） |
+| `DEEPSEEK_API_KEY` | 空字符串 | 两模式 | 模型 API Key（**可选**，默认留空）。用 MiniMax 等其它模型无需此项；要走 DeepSeek 官方路由可填真实 key，或在 Web 界面「设置 → 模型」配置（推荐，重建容器不丢失）。留空可避免误切官方路由时拿占位符 key 连 `api.deepseek.com` 触发 `upstream-reset` 告警 |
 
 ### 5.2 启动脚本层的宿主端口变量（bridge 模式独有，非 ENV）
 
@@ -435,3 +437,48 @@ docker exec -it dsh-web bash
 docker stop dsh-web
 docker rm -f dsh-web
 ```
+
+## 8. 近期更新（细节）
+
+本节是根 `README.md` 对应条目的技术细节展开，涉及插件源码与 Docker 部署脚本：8.1 对应「近期更新」的大文件项，8.2 对应「与上游仓库的功能对比」的密码长度项，8.3 / 8.4 对应「近期更新」的 Docker 部署项。其中镜像与脚本的改动需**重建镜像 / 重建容器**后生效，仅改容器内的文件会在重建时丢失。
+
+### 8.1 全链路放开大文件上传 / 下载 / 预览限制
+
+此前多个环节各自带有默认大小上限，导致大文件上传失败、侧栏预览报 `too-large`、下载报 `too large`。本轮从上到下逐层放开：
+
+| 环节 | 限制点 | 原值 | 现值 |
+| --- | --- | --- | --- |
+| 网关请求体 | nginx `client_max_body_size` | 1 MiB（超出返回 413） | `0`（不限制），并设 `proxy_request_buffering off` 边收边转发 |
+| `/lan/` 成员请求 / 响应 | `carrier/member.mjs` 的 `REQUEST_BYTES` / `RESPONSE_BYTES` | 1 MiB / 16 MiB | `Infinity`（不限制） |
+| 侧栏预览·整文件读取 | `workspace-files.maxFileBytes`（由 `MAX_FILE_BYTES` 驱动） | 32 MiB | 256 MiB |
+| 侧栏预览·文本单页 | `workspace-files.maxBytes`（由 `MAX_TEXT_BYTES` 驱动） | 2 MiB | 64 MiB |
+
+> **三条路径彼此独立**，容易混淆：
+> - **上传**走 nginx → 直接写文件，仅受 `client_max_body_size` 约束，现已不限制；
+> - **侧栏下载**走 `/api/dsh-ssh/download`（SSH 通道流式传输），**不经过** `workspace-files`，因此不受 256 MiB 限制，可下载任意大小文件；
+> - **侧栏预览**才走 `workspace-files` 的 `readBytes` 把内容读进内存，受上表后两项约束——超大文件预览仍可能报 `too-large`，但**下载不受影响**。整文件读入内存勿把上限设得过大。
+>
+> 如要把成员请求/响应改成**固定数值上限**（例如 512 MiB），编辑 `carrier/member.mjs` 中 `AUTH_BYTES / FACADE_BYTES / REQUEST_BYTES / RESPONSE_BYTES` 那一行，源码注释里已给出示例写法。其中 `AUTH_BYTES` 管 `/lan/auth` 等认证请求，`FACADE_BYTES` 管 `/lan/owner-api` 等管理接口，`REQUEST_BYTES` / `RESPONSE_BYTES` 管普通成员接口的请求与响应体。
+
+### 8.2 成员密码最短长度改为 8 位
+
+此前新建 / 邀请成员要求「长密码至少 16 位」（后端校验 12 位），现统一为 **8–1024 位**，降低记忆负担：
+
+- `core/validation.js` 后端校验：`12` → `8`（提示文案同步为 `8–1024 characters`）；
+- `carrier/login-document.mjs` 接受邀请页 `minLength`：`16` → `8`；
+- `client.js` 新建 / 邀请 / 改密表单 `minLength`：`16` → `8`，中英文案同步为「密码（至少 8 个字符）」；
+- `tests/client-contract.test.js`、`tests/login-document.test.js` 相关断言同步更新。
+
+已有账号与密码不受影响，仅**新设置**密码时按新规则校验。
+
+### 8.3 Docker 内置 `dsh-web-all` 升级到 0.4.7
+
+`Docker/Dockerfile` 将 `@linxin666/dsh-web-all` 从 `0.4.2` 升级到 `0.4.7`。新版本修复了 task-board 插件未传 `peer` 导致**容器日志持续刷屏**的问题，并包含 Web 侧其它修复。此为**镜像级**改动，需**重建镜像并重建容器**后生效（旧容器仍运行 0.4.2）。
+
+### 8.4 启动脚本 `DEEPSEEK_API_KEY` 默认留空
+
+两个启动脚本的 `DEEPSEEK_API_KEY` 由占位符 `sk-xxxx` 改为**留空**：
+
+- 避免误切到 `deepseek-official` 路由时拿占位符 key 去连 `api.deepseek.com`，触发 `upstream-reset ×3` 之类的断连重试告警；
+- 使用 MiniMax 等其它模型**无需此项**；
+- 若确需 DeepSeek 官方路由，可在脚本中填真实 key（重建容器后生效），或在 Web 界面「设置 → 模型」配置凭据（**推荐**，重建容器不丢失）。

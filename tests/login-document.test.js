@@ -119,7 +119,7 @@ test('invitation is an explicit separate mode with new-password autofill and req
   const f = fixture({ language: 'zh-CN' }); f.tabs[1].click();
   assert.equal(f.document.documentElement.lang, 'zh-CN'); assert.equal(f.invitation.hidden, false);
   assert.equal(f.elements.inviteToken.disabled, false); assert.equal(f.elements.inviteToken.required, true);
-  assert.equal(f.elements.displayName.required, true); assert.equal(f.elements.password.autocomplete, 'new-password'); assert.equal(f.elements.password.minLength, 16);
+  assert.equal(f.elements.displayName.required, true); assert.equal(f.elements.password.autocomplete, 'new-password'); assert.equal(f.elements.password.minLength, 8);
   f.elements.username.value = 'invited'; f.elements.password.value = 'long-invited-password'; f.elements.inviteToken.value = 'invite-only'; f.elements.displayName.value = 'Member';
   await f.submitForm(); assert.equal(f.calls[0].fields.action, 'redeem'); assert.equal(f.calls[0].fields.inviteToken, 'invite-only');
   f.tabs[0].click(); assert.equal(f.invitation.hidden, true); assert.equal(f.elements.inviteToken.disabled, true); assert.equal(f.elements.password.autocomplete, 'current-password');

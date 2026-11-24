@@ -38,7 +38,7 @@ const script = `(() => {
     invitation.hidden = mode !== 'redeem';
     invitation.querySelectorAll('input').forEach(input => { input.disabled = mode !== 'redeem'; input.required = mode === 'redeem'; });
     form.elements.password.autocomplete = mode === 'redeem' ? 'new-password' : 'current-password';
-    form.elements.password.minLength = mode === 'redeem' ? 16 : 0;
+    form.elements.password.minLength = mode === 'redeem' ? 8 : 0;
     submit.textContent = copy[mode]; status.textContent = '';
   }));
   const invited = new URLSearchParams(location.hash.slice(1)).get('invite');

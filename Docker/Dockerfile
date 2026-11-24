@@ -330,7 +330,7 @@ EOF
 RUN dsh plugin --profile web add -w github:ysz-leo/dsh-multi-user-service
 
 RUN dsh plugin --profile web add -w \
-        @linxin666/dsh-web-all@0.4.2 \
+        @linxin666/dsh-web-all@0.4.7 \
         dshmarket \
         github:pn1024/dsh-ppt-master \
         dsh-plugin@2.2.7 \

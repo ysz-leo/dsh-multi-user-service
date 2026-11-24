@@ -1306,7 +1306,7 @@ test('owner explicit create, invite, access and password forms retain exact API 
   const accessValues = { 'access.files': 'on', 'access.attachments': 'on', 'access.subagents': 'on', 'access.interactions': 'on', toolAccess: 'whitelist', toolNames: ['read'], skillsMode: 'custom', skillNames: ['alpha'] };
   const access = { terminal: false, files: true, attachments: true, tasks: false, subagents: true, interactions: true, toolMode: 'whitelist', tools: ['read'], skills: ['alpha'] };
   clickAction('create');
-  assert.equal(ownerNodes(tree, node => node.props?.name === 'password')[0].props.minLength, 16);
+  assert.equal(ownerNodes(tree, node => node.props?.name === 'password')[0].props.minLength, 8);
   const createValues = { username: 'new-member', displayName: 'New member', password: 'long-enough-password', modelAccess: 'custom', routeIds: ['rte_a', 'rte_b'], defaultRouteId: 'rte_b', ...accessValues };
   await submit(ownerNodes(tree, node => node.type === 'form')[0], createValues);
   assert.equal(env.requests.some(request => request.fields.action === 'admin.createUser'), false);
@@ -1874,7 +1874,7 @@ test('forms have accessible labels, native confirmation and disabled pending con
   assert.match(source, /const actionButton = \(label, props = \{\}\) => h\(Button, \{ disabled: isBusy/);
   assert.match(source, /role: 'alert'/);
   assert.match(source, /role: 'status'/);
-  assert.match(source, /minLength: 16, maxLength: 1024/);
+  assert.match(source, /minLength: 8, maxLength: 1024/);
   assert.match(source, /autoComplete: 'current-password'/);
   assert.match(source, /'aria-current': currentPage === value \? 'page' : undefined/);
   assert.doesNotMatch(source, /'aria-pressed': selected\?\.id === project\.id/);
