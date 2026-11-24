@@ -12,7 +12,9 @@ import { memberBootRows, memberClientGraph, isBootRow, renderMemberIndexInjectio
 import { memberPath, memberSessionCwd, memberSettingsChangeAllowed } from './access.mjs';
 import { createMemberWorkspace, listMemberDirectory, listMemberWorkspaces, nextSessionDirectory, readArchivedSessions, renameMemberWorkspace, setMemberSessionArchived } from './workspaces.mjs';
 
-const AUTH_BYTES = 32 * 1024, FACADE_BYTES = 192 * 1024, REQUEST_BYTES = 1024 * 1024, RESPONSE_BYTES = 16 * 1024 * 1024;
+// /lan/ member request/response bodies are read fully into memory before forwarding.
+// Unlimited (Infinity) so large file upload/download/preview through the member facade is not capped.
+const AUTH_BYTES = 32 * 1024, FACADE_BYTES = 192 * 1024, REQUEST_BYTES = Infinity, RESPONSE_BYTES = Infinity;
 const IO_TIMEOUT_MS = 15_000;
 const PENDING_CWD_MS = 60_000;
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;

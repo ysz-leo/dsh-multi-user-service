@@ -33,6 +33,13 @@ BILI_PROXY_PORT=18781  # 镜像 nginx 默认反向代理口（host 下用不到�
 LAN_HOST=dsh-lan
 LAN_PORT="${WEB_PORT}"   # 跟随 WEB_PORT
 
+# —— 侧栏文件预览大小上限 ——
+# MAX_FILE_BYTES 管整文件读取（原版 32 MiB）；MAX_TEXT_BYTES 管文本单页（原版仅 2 MiB，
+# 默认预览模式走这条，点开大文本报 "too large" 多半是它）。两者超限都会报 too large。
+# 内容会读入内存，勿设过大。
+MAX_FILE_BYTES=268435456     # 256 MiB，整文件读取上限
+MAX_TEXT_BYTES=67108864      # 64 MiB，文本单页上限
+
 # —— 工作区挂载（成员会话数据所在目录，务必改成你自己的路径）——
 WORKSPACE="/path/to/your/workspace"
 
@@ -76,6 +83,8 @@ docker run -d \
   -e SSH_PORT="${SSH_PORT}" \
   -e BILI_ZONE_PORT="${BILI_ZONE_PORT}" \
   -e BILI_PROXY_PORT="${BILI_PROXY_PORT}" \
+  -e MAX_FILE_BYTES="${MAX_FILE_BYTES}" \
+  -e MAX_TEXT_BYTES="${MAX_TEXT_BYTES}" \
   -e LAN_HOST="${LAN_HOST}" \
   -e LAN_PORT="${LAN_PORT}" \
   -e DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY}" \

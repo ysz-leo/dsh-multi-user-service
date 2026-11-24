@@ -69,6 +69,12 @@ FROM node:22-slim
 #   - BILI_PROXY_PORT  nginx 的 bili 专用反向代理口（默认 18781）。★bridge 模式核心依赖：
 #                      宿主 18787 → 容器 18781 → bili 回环 18787（本体绑回环，-p 无法直连）；
 #                      host 模式下容器回环即宿主回环、bili 直连，此口闲置但仍会监听。
+#   - MAX_FILE_BYTES   侧栏文件预览「整文件读取」上限（默认 268435456 = 256 MiB），对应
+#                      workspace-files.maxFileBytes，原版仅 32 MiB。超限报 workspace-file/too-large。
+#   - MAX_TEXT_BYTES   侧栏文件预览「文本单页」上限（默认 67108864 = 64 MiB），对应
+#                      workspace-files.maxBytes，原版仅 2 MiB。侧栏默认走文本分页预览（read），
+#                      这才是点开大文本报 "too large" 的最常见根因，故一并调大。
+#                      两者均通过下方 docker-patch.yml 注入；读入内存，勿设过大。
 #
 # 【二】启动脚本层的宿主端口变量（★非镜像 ENV，不进容器，env 里看不到；仅 bridge 模式有）
 #   这些变量在 start-dsh-web.sh 里定义，只用于拼 docker run 的 -p 映射，不会传进容器：
@@ -86,7 +92,9 @@ ENV WEB_PORT=3080 \
     LAN_PORT="${LAN_PORT:-$WEB_PORT}" \
     BILI_ZONE_PORT=18787 \
     BILI_PROXY_PORT=18781 \
-    SSH_PORT=220
+    SSH_PORT=220 \
+    MAX_FILE_BYTES=268435456 \
+    MAX_TEXT_BYTES=67108864
 
 RUN useradd -m -s /bin/bash dsh
 
@@ -155,6 +163,8 @@ LAN_PORT="${LAN_PORT:-$WEB_PORT}"     # 不填则跟随 WEB_PORT
 BILI_ZONE_PORT="${BILI_ZONE_PORT:-18787}"   # bili(billion-context) 本体监听口（容器内回环）
 BILI_PROXY_PORT="${BILI_PROXY_PORT:-18781}" # nginx bili 专用反向代理口（映射到宿主机 18787）
 SSH_PORT="${SSH_PORT:-220}"                 # sshd 监听端口：默认 220
+MAX_FILE_BYTES="${MAX_FILE_BYTES:-268435456}" # 侧栏文件预览整文件读取上限（默认 256 MiB；原版仅 32 MiB）
+MAX_TEXT_BYTES="${MAX_TEXT_BYTES:-67108864}"  # 侧栏文件预览文本单页上限（默认 64 MiB；原版仅 2 MiB）
 
 if [ "${DSH_PORT}" = "${WEB_PORT}" ]; then
   echo "[entrypoint] ERROR: DSH_PORT(${DSH_PORT}) 与 WEB_PORT(${WEB_PORT}) 相同，nginx 与 dsh 会抢同一监听口" >&2
@@ -195,6 +205,12 @@ server {
     listen ${WEB_PORT};
     server_name _;
 
+    # 文件上传不限制大小：nginx 默认 client_max_body_size 1m，超过直接 413；
+    # 设为 0 表示无限制；proxy_request_buffering off 让请求体边收边转发、不缓冲到磁盘。
+    # 注意：这里只解除 nginx 层限制；图片附件另受 DSH 自身 maxImageBytes（默认 20 MiB）约束。
+    client_max_body_size 0;
+    proxy_request_buffering off;
+
     # 成员入口：透传真实来源
     location /lan/ {
         proxy_pass http://${DSH_BIND}:${DSH_PORT};
@@ -232,6 +248,16 @@ cat > /app/docker-patch.yml <<EOF
       - 127.0.0.1:${WEB_PORT}
       - localhost:${WEB_PORT}
       - ${LAN_HOST}:${LAN_PORT}
+
+# 调大侧栏「文件预览」上限：maxBytes 管文本分页（原版仅 2 MiB，默认预览模式走这条），
+# maxFileBytes 管整文件读取（原版 32 MiB）；两者超限都报 workspace-file/too-large。
+# 注意 patch 会整块替换 config，故 4 个字段需写全（其余两项保持官方默认）。
+- id: workspace-files
+  config:
+    maxBytes: ${MAX_TEXT_BYTES}
+    maxFileBytes: ${MAX_FILE_BYTES}
+    maxLines: 5000
+    maxEntries: 2000
 
 - id: multi-user-service
   name: '@ysz-leo/dsh-multi-user-service'
@@ -319,7 +345,7 @@ RUN dsh plugin --profile web add -w \
 # ===== 预置 bili(billion-context) 配置：开启 adminRelay 支持远程访问面板 =====
 # 远程设备的浏览器无法直连容器内回环 127.0.0.1:18787（会指向设备自身），
 # 开启 security.adminRelay 后，bili 面板经 dsh web 入口(3080)中转，远程设备可访问。
-# ⚠️ 安全提示：adminRelay 允许任何能访问 dsh web 入口的人使用完整 bili 管理面板
+# 安全提示：adminRelay 允许任何能访问 dsh web 入口的人使用完整 bili 管理面板
 #    （含配置修改与凭证写入）。请确保该入口已受登录鉴权或反向代理保护；
 #    如需关闭，删除下面的 security 字段即可。
 # 放在插件安装之后，覆盖 billion-context 首次运行可能生成的默认配置。

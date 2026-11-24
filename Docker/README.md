@@ -145,6 +145,8 @@ SSH_PORT=220                          # 容器内 sshd 端口（默认 220，配
 BILI_ZONE_PORT=18787                  # bili 对外入口端口（插件探测写死 18787，一般不要改）
 BILI_PROXY_PORT=18781                 # 容器内 nginx bili 专用反向代理口（一般不要改）
 LAN_HOST=dsh-lan                      # 对外域名（建议在 hosts 里映射到服务器 IP）
+MAX_FILE_BYTES=268435456              # 侧栏预览「整文件读取」上限（默认 256 MiB，原版仅 32 MiB）
+MAX_TEXT_BYTES=67108864               # 侧栏预览「文本单页」上限（默认 64 MiB，原版仅 2 MiB，点开大文本报 too large 多半是它）
 WORKSPACE="/path/to/your/workspace"   # 成员会话数据目录（务必改成你自己的路径）
 DEEPSEEK_API_KEY="sk-xxxx"            # 你的模型 API Key（必填）
 ```
@@ -164,6 +166,8 @@ SSH_PORT=221           # 占用宿主 221（避开默认 22，并与 bridge 的 
 BILI_ZONE_PORT=18787   # 占用宿主 18787（bili 本体，绑回环；插件写死 18787，一般不要改）
 DSH_PORT=13080         # dsh 本体内部监听口
 LAN_HOST=dsh-lan       # 必须与 owner 的 127.0.0.1 不同，否则多用户插件启动校验失败
+MAX_FILE_BYTES=268435456  # 侧栏预览「整文件读取」上限（默认 256 MiB，原版仅 32 MiB）
+MAX_TEXT_BYTES=67108864   # 侧栏预览「文本单页」上限（默认 64 MiB，原版仅 2 MiB）
 WORKSPACE="/path/to/your/workspace"
 DEEPSEEK_API_KEY="sk-xxxx"
 ```
@@ -199,6 +203,8 @@ docker run -d \
   -e SSH_PORT=220 \
   -e BILI_ZONE_PORT=18787 \
   -e BILI_PROXY_PORT=18781 \
+  -e MAX_FILE_BYTES=268435456 \
+  -e MAX_TEXT_BYTES=67108864 \
   -e LAN_HOST=dsh-lan \
   -e LAN_PORT=3080 \
   -e DEEPSEEK_API_KEY=sk-xxxx \
@@ -219,6 +225,8 @@ docker run -d \
   -e DSH_BIND=127.0.0.1 \
   -e SSH_PORT=221 \
   -e BILI_ZONE_PORT=18787 \
+  -e MAX_FILE_BYTES=268435456 \
+  -e MAX_TEXT_BYTES=67108864 \
   -e LAN_HOST=dsh-lan \
   -e LAN_PORT=3080 \
   -e DEEPSEEK_API_KEY=sk-xxxx \
@@ -259,6 +267,22 @@ docker run -d \
 > 注意：
 > - 成员入口走 `/lan/`，需要 `LAN_HOST` + `LAN_PORT` 与浏览器看到的 host:port 一致，否则 origin/trusted-host 校验会失败；且 `LAN_HOST` 必须与 owner 的 `127.0.0.1` **不同**（默认 `dsh-lan`），否则多用户插件启动校验失败、报 `not found`。
 > - host 模式下 `18787` 绑回环，只能服务器本机访问；镜像已预置 bili 的 `security.adminRelay`，远程设备的面板会经 dsh web 入口（3080）中转访问（见下文说明）。
+
+### 文件上传大小（不限制）
+
+通过侧栏 `/file` 命令或拖拽上传的文件，**大小不受限制**。镜像内 nginx 主入口已显式设置：
+
+```nginx
+client_max_body_size 0;          # 0 = 不限制（nginx 默认仅 1 MiB，超过会返回 413）
+proxy_request_buffering off;     # 请求体边收边转发，不整体缓冲到磁盘
+```
+
+几点说明：
+
+- **nginx 层已放开**：DSH 的通用文件上传走 `POST /api/session/uploadFileBinary`（`application/octet-stream` 全流式），后端分块落盘、本身无大小上限；此前传大文件报 `413 Request Entity Too Large` 是 nginx 默认 1 MiB 限制所致，现已解除。
+- **图片附件仍受 DSH 自身约束**：单张图片默认上限 20 MiB（`maxImageBytes`）、单条消息图片合计 200 MiB，且图片走 base64 编码（膨胀约 33%）。这与 nginx 无关，如需调大要在 DSH 插件配置层设置。
+- **与预览的区别**：`MAX_FILE_BYTES` / `MAX_TEXT_BYTES`（见「环境变量」）只控制**侧栏预览**的读取上限（整文件 256 MiB / 文本单页 64 MiB），不影响上传；上传不受这两个值限制。点开文件报 "too large" 属预览限制，与上传通道无关。
+- **上传后能否被 AI 读取**：成员上传的附件会由插件镜像复制到会话工作区 `.uploads/`，AI 可直接读取（见根 README 的「兼容性」）。若文件极大，仍受磁盘空间与网络超时约束。
 
 ### bili 链路（两种模式不同）
 
@@ -374,6 +398,8 @@ ping dsh-lan        # 应解析到 <服务器IP>
 | `SSH_PORT` | `220` | 两模式 | 容器 sshd 端口（默认三位数 `220`，entrypoint 启动时动态写入 sshd_config）。bridge 保持默认 `220` 并用 `-p 220:220` 映射；host 模式用 `221` 以避开宿主默认 22 并与 bridge 错开 |
 | `LAN_HOST` | `dsh-lan` | 两模式 | 成员入口对外域名，必须 ≠ owner 的 `127.0.0.1`，且需在 hosts / DNS 解析到服务器 IP |
 | `LAN_PORT` | 跟随 `WEB_PORT` | 两模式 | 成员入口对外端口，须等于浏览器实际看到的 host:port |
+| `MAX_FILE_BYTES` | `268435456`（256 MiB） | 两模式 | **侧栏文件预览的整文件读取上限**，对应 `workspace-files.maxFileBytes`（原版 32 MiB）。超限报 `workspace-file/too-large`。整文件读入内存，勿设过大 |
+| `MAX_TEXT_BYTES` | `67108864`（64 MiB） | 两模式 | **侧栏文件预览的文本单页上限**，对应 `workspace-files.maxBytes`（原版仅 2 MiB）。侧栏默认走文本分页预览（`read`），点开大文本报 "too large" 多半是这个值在起作用——上一版只调 `maxFileBytes` 不解决此场景。镜像通过 patch 同时调大两者，勿设过大 |
 | `DEEPSEEK_API_KEY` | — | 两模式 | 模型 API Key（必填） |
 
 ### 5.2 启动脚本层的宿主端口变量（bridge 模式独有，非 ENV）
