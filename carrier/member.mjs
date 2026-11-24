@@ -14,6 +14,8 @@ import { createMemberWorkspace, listMemberDirectory, listMemberWorkspaces, nextS
 
 // /lan/ member request/response bodies are read fully into memory before forwarding.
 // Unlimited (Infinity) so large file upload/download/preview through the member facade is not capped.
+// To cap instead (e.g. 512 MiB), replace the line below with:
+// const AUTH_BYTES = 32 * 1024, FACADE_BYTES = 192 * 1024, REQUEST_BYTES = 512 * 1024 * 1024, RESPONSE_BYTES = 512 * 1024 * 1024;
 const AUTH_BYTES = 32 * 1024, FACADE_BYTES = 192 * 1024, REQUEST_BYTES = Infinity, RESPONSE_BYTES = Infinity;
 const IO_TIMEOUT_MS = 15_000;
 const PENDING_CWD_MS = 60_000;
